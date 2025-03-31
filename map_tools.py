@@ -114,7 +114,7 @@ class FileProcessor(QThread):
     def run(self):
         try:
             if self.input_path.lower().endswith(('.zip', '.7z', '.rar')):
-                current_time = datetime.now().strftime("%Y-%m-%d  %H:%M:%S")
+                current_time = datetime.now().strftime("%Y-%m-%d   %H:%M:%S")
                 message = f"[{current_time}]正在解压文件..."
                 self.emit_same_message(message)
                 self.extract_archive()
@@ -126,30 +126,58 @@ class FileProcessor(QThread):
                 ]
                 if not vpk_files:
                     raise Exception("压缩包中没有找到VPK文件")
-                self.input_path = os.path.join(self.temp_dir, vpk_files[0])
 
-            if not self.input_path.lower().endswith('.vpk'):
+                    # 当有多个VPK文件时，统一导出到temp_dir_file
+                if len(vpk_files) > 1:
+                    if os.path.exists(self.temp_dir_file):
+                        shutil.rmtree(self.temp_dir_file, ignore_errors=True)
+                    os.makedirs(self.temp_dir_file)
+                    for vpk_file in vpk_files:
+                        original_vpk = vpk.open(vpk_file)
+                        for file_path in original_vpk:
+                            file = original_vpk.get_file(file_path)
+                            dest_path = os.path.join(self.temp_dir_file, file_path)
+                            os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+                            with open(dest_path, 'wb') as f:
+                                f.write(file.read())
+                else:
+                    self.input_path = vpk_files[0]
+            elif not self.input_path.lower().endswith('.vpk'):
                 raise Exception("输入文件不是VPK文件")
 
-            current_time = datetime.now().strftime("%Y-%m-%d  %H:%M:%S")
+            if not os.path.exists(self.temp_dir_file):
+                if os.path.exists(self.temp_dir_file):
+                    shutil.rmtree(self.temp_dir_file, ignore_errors=True)
+                os.makedirs(self.temp_dir_file)
+
+            if not os.listdir(self.temp_dir_file):
+                original_vpk = vpk.open(self.input_path)
+                for file_path in original_vpk:
+                    file = original_vpk.get_file(file_path)
+                    dest_path = os.path.join(self.temp_dir_file, file_path)
+                    os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+                    with open(dest_path, 'wb') as f:
+                        f.write(file.read())
+
+            current_time = datetime.now().strftime("%Y-%m-%d   %H:%M:%S")
             message = f"[{current_time}]正在处理VPK文件..."
             self.emit_same_message(message)
             self.process_vpk()
 
             if self.compress_vpk:
-                current_time = datetime.now().strftime("%Y-%m-%d  %H:%M:%S")
+                current_time = datetime.now().strftime("%Y-%m-%d   %H:%M:%S")
                 message = f"[{current_time}]正在压缩文件..."
                 self.emit_same_message(message)
                 self.compress_output()
 
-            current_time = datetime.now().strftime("%Y-%m-%d  %H:%M:%S")
+            current_time = datetime.now().strftime("%Y-%m-%d   %H:%M:%S")
             message = f"[{current_time}]处理完成！"
             self.emit_same_message(message)
             self.finished_signal.emit(True)
             shutil.rmtree(self.temp_dir_file, ignore_errors=True)
 
         except Exception as e:
-            current_time = datetime.now().strftime("%Y-%m-%d  %H:%M:%S")
+            current_time = datetime.now().strftime("%Y-%m-%d   %H:%M:%S")
             message = f"[{current_time}]错误: {str(e)}"
             self.emit_same_message(message)
             self.finished_signal.emit(False)
@@ -178,18 +206,6 @@ class FileProcessor(QThread):
         self.progress_signal.emit(30)
 
     def process_vpk(self):
-        if os.path.exists(self.temp_dir_file):
-            shutil.rmtree(self.temp_dir_file, ignore_errors=True)
-        os.makedirs(self.temp_dir_file)
-
-        original_vpk = vpk.open(self.input_path)
-        for file_path in original_vpk:
-            file = original_vpk.get_file(file_path)
-            dest_path = os.path.join(self.temp_dir_file, file_path)
-            os.makedirs(os.path.dirname(dest_path), exist_ok=True)
-            with open(dest_path, 'wb') as f:
-                f.write(file.read())
-
         self.progress_signal.emit(30)
         shutil.rmtree(self.temp_dir, ignore_errors=True)
         if self.check_dictionary:
@@ -201,7 +217,7 @@ class FileProcessor(QThread):
                         if file.lower().endswith('.bsp'):
                             bsp_files.append(os.path.join(root, file))
             else:
-                current_time = datetime.now().strftime("%Y-%m-%d  %H:%M:%S")
+                current_time = datetime.now().strftime("%Y-%m-%d   %H:%M:%S")
                 message = f"[{current_time}]警告：未找到maps文件夹"
                 self.emit_same_message(message)
 
@@ -214,7 +230,7 @@ class FileProcessor(QThread):
                     dname = os.path.splitext(os.path.basename(bsp_file))[0]
 
                     if offset >= 0:
-                        current_time = datetime.now().strftime("%Y-%m-%d  %H:%M:%S")
+                        current_time = datetime.now().strftime("%Y-%m-%d   %H:%M:%S")
                         message = f"[{current_time}]地图名称: {dname}.bsp, 字典存在,安全!"
                         self.dict_exist_signal.emit(message)
                     else:
@@ -223,7 +239,7 @@ class FileProcessor(QThread):
                             if not exe_path:
                                 raise Exception("用户取消选择exe路径")
 
-                            current_time = datetime.now().strftime("%Y-%m-%d  %H:%M:%S")
+                            current_time = datetime.now().strftime("%Y-%m-%d   %H:%M:%S")
                             message = f"[{current_time}]地图名称: {dname}.bsp, 字典缺失，正在进行处理!"
                             self.emit_same_message(message)
                             builder = MapBuilder(bsp_file, exe_path, self.dict_exist_signal)
@@ -242,7 +258,7 @@ class FileProcessor(QThread):
                                     raise Exception("用户取消选择exe路径")
 
                                 self.auto_compress_dict = True
-                                current_time = datetime.now().strftime("%Y-%m-%d  %H:%M:%S")
+                                current_time = datetime.now().strftime("%Y-%m-%d   %H:%M:%S")
                                 message = f"[{current_time}]地图名称: {dname}.bsp, 字典缺失，正在进行处理!"
                                 self.emit_same_message(message)
                                 builder = MapBuilder(bsp_file, exe_path, self.dict_exist_signal)
@@ -251,11 +267,11 @@ class FileProcessor(QThread):
                             b += 1
 
             if b == 0:
-                current_time = datetime.now().strftime("%Y-%m-%d  %H:%M:%S")
+                current_time = datetime.now().strftime("%Y-%m-%d   %H:%M:%S")
                 message = f"[{current_time}]字典检测完成,没有发现缺少字典的小图"
                 self.emit_same_message(message)
             else:
-                current_time = datetime.now().strftime("%Y-%m-%d  %H:%M:%S")
+                current_time = datetime.now().strftime("%Y-%m-%d   %H:%M:%S")
                 message = f"[{current_time}]字典检测完成,发现 {b} 个缺少字典的小图,已进行处理"
                 self.emit_same_message(message)
 
@@ -270,7 +286,7 @@ class FileProcessor(QThread):
                 if os.path.exists(self.temp_client_dir_file):
                     shutil.rmtree(self.temp_client_dir_file, ignore_errors=True)
 
-        current_time = datetime.now().strftime("%Y-%m-%d  %H:%M:%S")
+        current_time = datetime.now().strftime("%Y-%m-%d   %H:%M:%S")
         message = f"[{current_time}]正在进行地图服务端无用资源清洗.."
         self.emit_same_message(message)
         for root, dirs, files in os.walk(self.temp_dir_file):
@@ -279,7 +295,7 @@ class FileProcessor(QThread):
                     file_path = os.path.join(root, file)
                     os.remove(file_path)
 
-        current_time = datetime.now().strftime("%Y-%m-%d  %H:%M:%S")
+        current_time = datetime.now().strftime("%Y-%m-%d   %H:%M:%S")
         message = f"[{current_time}]地图服务端无用资源清洗完毕.."
         self.emit_same_message(message)
 
