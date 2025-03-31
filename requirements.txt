@@ -1,0 +1,17 @@
+Brotli==1.1.0
+inflate64==1.0.1
+multivolumefile==0.2.3
+psutil==7.0.0
+py7zr==0.22.0
+pybcj==1.0.3
+pycryptodomex==3.22.0
+pyppmd==1.1.1
+PyQt5==5.15.11
+PyQt5-Qt5==5.15.2
+PyQt5_sip==12.17.0
+pyzstd==0.16.2
+rarfile==4.2
+setuptools==75.8.0
+texttable==1.7.0
+vpk==1.4.0
+wheel==0.45.1
