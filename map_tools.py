@@ -8,7 +8,7 @@ from PyQt5.QtCore import Qt, QThread, pyqtSignal
 import zipfile
 import py7zr
 import rarfile
-import vpk
+import l4d2_vpk_lib as vpk
 import sys
 from datetime import datetime
 import configparser
@@ -16,8 +16,9 @@ import re
 import psutil
 import requests
 from packaging import version
+import time
 
-CURRENT_VERSION = "1.0.0"
+CURRENT_VERSION = "1.0.1"
 UPDATE_CHECK_URL = "https://api.github.com/repos/Mineralcr/l4d2_Map_Tools/releases/latest"
 CONFIG_FILE = "map_tools_config.ini"
 
@@ -132,7 +133,7 @@ class MapBuilder:
             self.l4d2_exe_path,
             "-steam", "-insecure", "-novid",
             "-hidden", "-nosound", "-noborder",
-            "-x", "4096", "-y", "2160",
+            "-x", "4096", "-y", "2160","-heapsize", "2097151",
             "+map", map_name, "-stringtabledictionary", "-buildcubemaps"
         ]
         current_time = datetime.now().strftime("%Y-%m-%d   %H:%M:%S")
@@ -167,9 +168,10 @@ class FileProcessor(QThread):
         self.compress_vpk = compress_vpk
         self.check_dictionary = check_dictionary
         self.bsp_path = bsp_path
-        self.temp_dir = os.path.join(os.path.dirname(self.output_path), "temp_vpk")
-        self.temp_dir_file = os.path.join(os.path.dirname(self.output_path), "temp_vpk_file")
-        self.temp_client_dir_file = os.path.join(os.path.dirname(self.output_path), "temp_vpk_client_file")
+        print(self.output_path)
+        self.temp_dir = os.path.join(self.output_path, "temp_vpk")
+        self.temp_dir_file = os.path.join(self.output_path, "temp_vpk_file")
+        self.temp_client_dir_file = os.path.join(self.output_path, "temp_vpk_client_file")
         self.auto_compress_dict = auto_compress_dict
         self.main_window = main_window
         self.client_output_path = None
@@ -194,36 +196,20 @@ class FileProcessor(QThread):
                 if not vpk_files:
                     raise Exception("压缩包中没有找到VPK文件")
 
-                if len(vpk_files) > 1:
-                    if os.path.exists(self.temp_dir_file):
-                        shutil.rmtree(self.temp_dir_file, ignore_errors=True)
-                    os.makedirs(self.temp_dir_file)
-                    for vpk_file in vpk_files:
-                        original_vpk = vpk.open(vpk_file)
-                        for file_path in original_vpk:
-                            file = original_vpk.get_file(file_path)
-                            dest_path = os.path.join(self.temp_dir_file, file_path)
-                            os.makedirs(os.path.dirname(dest_path), exist_ok=True)
-                            with open(dest_path, 'wb') as f:
-                                f.write(file.read())
-                else:
-                    self.input_path = vpk_files[0]
-            elif not self.input_path.lower().endswith('.vpk'):
-                raise Exception("输入文件不是VPK文件")
-
-            if not os.path.exists(self.temp_dir_file):
                 if os.path.exists(self.temp_dir_file):
                     shutil.rmtree(self.temp_dir_file, ignore_errors=True)
                 os.makedirs(self.temp_dir_file)
-
-            if not os.listdir(self.temp_dir_file):
-                original_vpk = vpk.open(self.input_path)
-                for file_path in original_vpk:
-                    file = original_vpk.get_file(file_path)
-                    dest_path = os.path.join(self.temp_dir_file, file_path)
-                    os.makedirs(os.path.dirname(dest_path), exist_ok=True)
-                    with open(dest_path, 'wb') as f:
-                        f.write(file.read())
+                for vpk_file in vpk_files:
+                    original_vpk = vpk.open(vpk_file)
+                    for file_path in original_vpk:
+                        file = original_vpk.get_file(file_path)
+                        dest_path = os.path.join(self.temp_dir_file, file_path)
+                        os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+                        with open(dest_path, 'wb') as f:
+                            f.write(file.read())
+                self.input_path = vpk_files[0]
+            elif not self.input_path.lower().endswith('.vpk'):
+                raise Exception("输入文件不是VPK文件")
 
             current_time = datetime.now().strftime("%Y-%m-%d    %H:%M:%S")
             message = f"[{current_time}]正在处理VPK文件..."
@@ -254,10 +240,14 @@ class FileProcessor(QThread):
                 shutil.rmtree(self.temp_dir_file, ignore_errors=True)
             if os.path.exists(self.temp_client_dir_file):
                 shutil.rmtree(self.temp_client_dir_file, ignore_errors=True)
+            if os.path.exists(self.temp_dir):
+                shutil.rmtree(self.temp_dir, ignore_errors=True)
+
 
     def extract_archive(self):
-        if not os.path.exists(self.temp_dir):
-            os.makedirs(self.temp_dir)
+        if os.path.exists(self.temp_dir):
+            shutil.rmtree(self.temp_dir, ignore_errors=True)
+        os.makedirs(self.temp_dir)
 
         if self.input_path.lower().endswith('.zip'):
             with zipfile.ZipFile(self.input_path, 'r') as zip_ref:
@@ -273,7 +263,8 @@ class FileProcessor(QThread):
 
     def process_vpk(self):
         self.progress_signal.emit(30)
-        shutil.rmtree(self.temp_dir, ignore_errors=True)
+        if os.path.exists(self.temp_dir):
+            shutil.rmtree(self.temp_dir, ignore_errors=True)
         if self.check_dictionary:
             bsp_files = []
             maps_dir = os.path.join(self.temp_dir_file, "maps")
@@ -368,7 +359,10 @@ class FileProcessor(QThread):
         self.progress_signal.emit(50)
 
         base_name = os.path.splitext(os.path.basename(self.input_path))[0]
-        output_vpk = os.path.join(self.output_path, f"{base_name}_server.vpk")
+        if b == 0:
+            output_vpk = os.path.join(self.output_path, f"{base_name}_server.vpk")
+        else:
+            output_vpk = os.path.join(os.path.dirname(self.output_path), f"{base_name}_server.vpk")
 
         new_pack = vpk.new(self.temp_dir_file)
         new_pack.save(output_vpk)
@@ -396,24 +390,52 @@ class FileProcessor(QThread):
             self.output_path = server_zip_path
 
 
-class MainWindow(QMainWindow):
-    def __init__(self):
-        super().__init__()
-
-        self.setWindowIcon(self.style().standardIcon(42))
-        self.setWindowTitle("  洛琪地图简易工具")
-        self.setGeometry(100, 100, 400, 750)
-
-        self.central_widget = QWidget()
-        self.setCentralWidget(self.central_widget)
-
-        self.layout = QVBoxLayout()
-
-        self.layout.setSpacing(15)
-        self.layout.setContentsMargins(20, 20, 20, 20)
-        self.central_widget.setLayout(self.layout)
-
-        self.setStyleSheet("""  
+class DragAndDropButton(QPushButton):
+    def __init__(self, text, parent=None):
+        super().__init__(text, parent)
+        self.setAcceptDrops(True) 
+ 
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls(): 
+            event.acceptProposedAction() 
+        else:
+            event.ignore() 
+ 
+    def dropEvent(self, event):
+        for url in event.mimeData().urls(): 
+            file_path = url.toLocalFile() 
+            if file_path.lower().endswith(('.vpk',  '.zip', '.7z', '.rar')):
+ 
+                main_window = self.parent().parent().window() 
+                main_window.input_file  = file_path 
+                main_window.file_path_label.setText(file_path) 
+                main_window.save_config() 
+                main_window.process_btn.setEnabled(True) 
+                if main_window.output_dir  == "":
+                    main_window.output_dir  = os.path.dirname(file_path) 
+             
+            else:
+                QMessageBox.warning(self,  "错误", "不支持的格式，仅支持.vpk/.zip/.7z/.rar")
+ 
+ 
+class MainWindow(QMainWindow): 
+    def __init__(self): 
+        super().__init__() 
+ 
+        self.setWindowIcon(self.style().standardIcon(42))  
+        self.setWindowTitle("   洛琪地图简易工具") 
+        self.setGeometry(100,  100, 400, 750) 
+ 
+        self.central_widget  = QWidget() 
+        self.setCentralWidget(self.central_widget)  
+ 
+        self.layout  = QVBoxLayout() 
+ 
+        self.layout.setSpacing(15)  
+        self.layout.setContentsMargins(20,  20, 20, 20) 
+        self.central_widget.setLayout(self.layout)  
+ 
+        self.setStyleSheet("""   
             QWidget { 
                 font-family: "宋体", "Times New Roman", sans-serif; 
                 font-size: 14px; 
@@ -422,290 +444,290 @@ class MainWindow(QMainWindow):
                 color: #333; 
             } 
             QPushButton { 
-                background-color: #FFB6C1;
+                background-color: #FFB6C1; 
                 color: white; 
                 border: none; 
                 padding: 8px 16px; 
                 border-radius: 4px; 
             } 
             QPushButton:hover { 
-                background-color: #FF69B4;
+                background-color: #FF69B4; 
             } 
             QCheckBox { 
                 color: #333; 
             } 
-            QProgressBar {
-                border: 1px solid #ccc;
+            QProgressBar { 
+                border: 1px solid #ccc; 
                 border-radius: 5px; 
                 text-align: center; 
                 background: white; 
-            }
+            } 
             QTextEdit { 
                 border: 1px solid #ccc; 
                 border-radius: 4px; 
             } 
-        """)
-
-        self.title_label = QLabel("洛琪地图简易工具")
-        self.title_label.setAlignment(Qt.AlignCenter)
-        self.title_label.setStyleSheet("""  
+        """) 
+ 
+        self.title_label  = QLabel("洛琪地图简易工具") 
+        self.title_label.setAlignment(Qt.AlignCenter)  
+        self.title_label.setStyleSheet("""   
             font-family: "黑体"; 
             font-size: 24px; 
             font-weight: bold; 
             margin-bottom: 20px; 
             color: #007BFF; 
-        """)
-        self.layout.addWidget(self.title_label)
-
-        self.select_file_btn = QPushButton("选择输入文件(.vpk .zip .7z .rar)")
-        self.select_file_btn.clicked.connect(self.select_input_file)
-        self.layout.addWidget(self.select_file_btn)
-
-        self.file_path_label = QLabel("未选择文件")
-        self.file_path_label.setWordWrap(True)
-        self.layout.addWidget(self.file_path_label)
-
-        self.select_bsp_path_btn = QPushButton("选择left4dead2.exe  路径[自动压字典功能才需要]")
-        self.select_bsp_path_btn.clicked.connect(self.get_l4d2_exe_path)
-        self.layout.addWidget(self.select_bsp_path_btn)
-
-        self.bsp_path_label = QLabel("未选择left4dead2.exe  路径")
-        self.bsp_path_label.setWordWrap(True)
-        self.layout.addWidget(self.bsp_path_label)
-
-        self.select_output_dir_btn = QPushButton("选择文件导出位置")
-        self.select_output_dir_btn.clicked.connect(self.select_output_dir)
-        self.layout.addWidget(self.select_output_dir_btn)
-
-        self.output_dir_label = QLabel("未选择导出位置，将导出到当前文件夹下")
-        self.output_dir_label.setWordWrap(True)
-        self.layout.addWidget(self.output_dir_label)
-
-        self.compress_checkbox = QCheckBox("自动压缩为ZIP文件")
-        self.compress_checkbox.setChecked(True)
-        self.layout.addWidget(self.compress_checkbox)
-
-        self.check_dictionary_checkbox = QCheckBox("执行字典存在性检测")
-        self.check_dictionary_checkbox.setChecked(True)
-        self.layout.addWidget(self.check_dictionary_checkbox)
-
-        self.auto_compress_dict_checkbox = QCheckBox("开启自动压字典[如果字典缺失]")
-        self.auto_compress_dict_checkbox.setChecked(True)
-        self.layout.addWidget(self.auto_compress_dict_checkbox)
-
-        self.process_btn = QPushButton("开始处理")
-        self.process_btn.clicked.connect(self.process_file)
-        self.process_btn.setEnabled(False)
-        self.layout.addWidget(self.process_btn)
-
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setVisible(False)
-        self.layout.addWidget(self.progress_bar)
-
-        self.status_label = QLabel("")
-        self.status_label.setWordWrap(True)
-        self.layout.addWidget(self.status_label)
-
-        self.log_text_edit = QTextEdit()
-        self.log_text_edit.setReadOnly(True)
-        self.layout.addWidget(self.log_text_edit)
-
-        self.feature_description_label = QLabel(
-            "本工具功能介绍：\n1. 自动检测地图字典缺失炸服并自动修复\n2. 自动删除服务器不需要的文件节约服务器空间")
-        self.feature_description_label.setWordWrap(True)
-        self.layout.addWidget(self.feature_description_label)
-
-        self.input_file = ""
-        self.output_file = ""
-        self.bsp_path = ""
-        self.output_dir = ""
-        self.worker = None
-
-        self.load_config()
-        self.check_for_updates()
-
-    def load_config(self):
-        config = configparser.ConfigParser()
-        if os.path.exists(CONFIG_FILE):
-            config.read(CONFIG_FILE)
-            if 'Paths' in config:
-                last_input_folder = config.get('Paths', 'last_input_folder', fallback='')
-                last_exe_path = config.get('Paths', 'last_exe_path', fallback='')
-                last_output_dir = config.get('Paths', 'last_output_dir', fallback='')
-                if last_input_folder:
-                    self.last_input_folder = last_input_folder
-                if last_exe_path:
-                    self.bsp_path = last_exe_path
-                    self.bsp_path_label.setText(last_exe_path)
-                if last_output_dir:
-                    self.output_dir = last_output_dir
-                    self.output_dir_label.setText(last_output_dir)
-
-    def save_config(self):
-        config = configparser.ConfigParser()
-        config['Paths'] = {
-            'last_input_folder': os.path.dirname(self.input_file) if self.input_file else '',
-            'last_exe_path': self.bsp_path,
-            'last_output_dir': self.output_dir
-        }
-        with open(CONFIG_FILE, 'w') as configfile:
-            config.write(configfile)
-
-    def is_steam_no_running(self):
-        for proc in psutil.process_iter(['name']):
-            if proc.info['name'].lower() in ['steam.exe', 'steam']:
-                return False
-        return True
-
-    def select_input_file(self):
-        if self.is_steam_no_running():
-            QMessageBox.warning(self, "警告", "Steam未运行,可能无法自动压制字典")
-
-        initial_dir = getattr(self, 'last_input_folder', '')
-        file_filter = "支持的格式 (*.vpk *.zip *.7z *.rar)"
-        file_path, _ = QFileDialog.getOpenFileName(
-            self, "选择输入文件", initial_dir, file_filter)
-
-        if file_path:
-            self.input_file = file_path
-            self.file_path_label.setText(file_path)
-            self.save_config()
-            self.process_btn.setEnabled(True)
-            if self.output_dir == "":
-                self.output_dir = os.path.dirname(file_path)
-        else:
-            self.process_btn.setEnabled(False)
-
-    def select_output_dir(self):
-        output_dir = QFileDialog.getExistingDirectory(self, "选择导出位置")
-        if output_dir:
-            self.output_dir = output_dir
-            self.output_dir_label.setText(output_dir)
-            self.save_config()
-            self.load_config()
-
-    def get_l4d2_exe_path(self, use_config=False):
-        if use_config:
-            config = configparser.ConfigParser()
-            if os.path.exists(CONFIG_FILE):
-                config.read(CONFIG_FILE)
-                if 'Paths' in config:
-                    exe_path = config.get('Paths', 'last_exe_path', fallback='')
-                    if exe_path and os.path.exists(exe_path):
-                        return exe_path
-
-        file_path, _ = QFileDialog.getOpenFileName(
-            self, "选择 left4dead2.exe",
-            "", "Executable Files (*.exe)"
-        )
-        if file_path:
-            self.bsp_path = file_path
-            self.bsp_path_label.setText(file_path)
-            self.save_config()
-            self.load_config()
-            return file_path
-        return None
-
-    def process_file(self):
-        if not self.input_file:
-            QMessageBox.warning(self, "警告", "请先选择输入文件")
-            return
-
-        self.progress_bar.setVisible(True)
-        self.progress_bar.setValue(0)
-
-        self.worker = FileProcessor(
-            self.input_file,
-            self.output_dir,
-            self.compress_checkbox.isChecked(),
-            self.check_dictionary_checkbox.isChecked(),
-            self.bsp_path,
-            self.auto_compress_dict_checkbox.isChecked(),
-            self
-        )
-
-        self.worker.progress_signal.connect(self.progress_bar.setValue)
-        self.worker.message_signal.connect(self.status_label.setText)
-        self.worker.dict_exist_signal.connect(self.log_text_edit.append)
-        self.worker.finished_signal.connect(self.on_process_finished)
-        self.worker.start()
-
-    def on_process_finished(self, success):
-        self.progress_bar.setVisible(False)
-        self.process_btn.setEnabled(True)
-
-        if success:
-            if self.worker.client_output_path is None:
-                QMessageBox.information(
-                    self, "完成",
-                    f"处理完成！输出路径：{self.worker.output_path}\n"
-                    f"点击确定后将自动打开输出目录",
-                    QMessageBox.Ok
-                )
-            else:
-                QMessageBox.information(
-                    self,
-                    "处理完成",
-                    f"已生成两份文件：\n{os.path.basename(self.worker.output_path)}\n{os.path.basename(self.worker.client_output_path)}\n"
-                    f"前者上传服务器，后者发送玩家使用\n"
-                    f"点击确定后将自动打开输出目录",
-                    QMessageBox.Ok
-                )
-
-            output_dir = os.path.dirname(self.worker.output_path)
-            self.worker.client_output_path = None
-            if sys.platform == 'win32':
-                os.startfile(output_dir)
-            elif sys.platform == 'darwin':
-                subprocess.Popen(['open', output_dir])
-            else:
-                subprocess.Popen(['xdg-open', output_dir])
-        else:
-            QMessageBox.critical(self, "错误", "处理过程中出现错误")
-
-    def check_for_updates(self):
-        self.update_checker = UpdateChecker()
-        self.update_checker.update_available_signal.connect(self.show_update_dialog)
-        self.update_checker.no_update_signal.connect(self.show_no_update_message)
-        self.update_checker.start()
-
-    def show_update_dialog(self, download_url):
-        reply = QMessageBox.question(self, "发现新版本",
-                                     "检测到新版本可用，是否立即更新？",
-                                     QMessageBox.Yes | QMessageBox.No)
-        if reply == QMessageBox.Yes:
-            self.download_update(download_url)
-
-    def show_no_update_message(self):
-        QMessageBox.information(
-            self,
-            "更新检查",
-            f"当前已是最新版本 (v{CURRENT_VERSION})",
-            QMessageBox.Ok
-        )
-
-    def download_update(self, download_url):
-        self.progress = QProgressDialog("正在下载更新...", "取消", 0, 100, self)
-        self.progress.setWindowModality(Qt.WindowModal)
-
-        self.update_downloader = UpdateDownloader(download_url)
-        self.update_downloader.progress_signal.connect(self.progress.setValue)
-        self.update_downloader.finished_signal.connect(self.apply_update)
-        self.update_downloader.start()
-
-    def apply_update(self):
-        try:
-            with zipfile.ZipFile("update.zip", 'r') as zip_ref:
-                zip_ref.extractall(os.getcwd())
-            os.remove("update.zip")
-            QMessageBox.information(self, "更新完成", "程序将在重启后生效")
-            self.restart_application()
-        except Exception as e:
-            QMessageBox.critical(self, "更新失败", f"错误信息: {str(e)}")
-
-    def restart_application(self):
-        python = sys.executable
-        os.execl(python, python, *sys.argv)
+        """) 
+        self.layout.addWidget(self.title_label)  
+ 
+        self.select_file_btn  = DragAndDropButton("选择输入文件(.vpk .zip .7z .rar)") 
+        self.select_file_btn.clicked.connect(self.select_input_file)  
+        self.layout.addWidget(self.select_file_btn)  
+ 
+        self.file_path_label  = QLabel("未选择文件") 
+        self.file_path_label.setWordWrap(True)  
+        self.layout.addWidget(self.file_path_label)  
+ 
+        self.select_bsp_path_btn  = QPushButton("选择left4dead2.exe   路径[自动压字典功能才需要]") 
+        self.select_bsp_path_btn.clicked.connect(self.get_l4d2_exe_path)  
+        self.layout.addWidget(self.select_bsp_path_btn)  
+ 
+        self.bsp_path_label  = QLabel("未选择left4dead2.exe   路径") 
+        self.bsp_path_label.setWordWrap(True)  
+        self.layout.addWidget(self.bsp_path_label)  
+ 
+        self.select_output_dir_btn  = QPushButton("选择文件导出位置") 
+        self.select_output_dir_btn.clicked.connect(self.select_output_dir)  
+        self.layout.addWidget(self.select_output_dir_btn)  
+ 
+        self.output_dir_label  = QLabel("未选择导出位置，将导出到当前文件夹下") 
+        self.output_dir_label.setWordWrap(True)  
+        self.layout.addWidget(self.output_dir_label)  
+ 
+        self.compress_checkbox  = QCheckBox("自动压缩为ZIP文件") 
+        self.compress_checkbox.setChecked(True)  
+        self.layout.addWidget(self.compress_checkbox)  
+ 
+        self.check_dictionary_checkbox  = QCheckBox("执行字典存在性检测") 
+        self.check_dictionary_checkbox.setChecked(True)  
+        self.layout.addWidget(self.check_dictionary_checkbox)  
+ 
+        self.auto_compress_dict_checkbox  = QCheckBox("开启自动压字典[如果字典缺失]") 
+        self.auto_compress_dict_checkbox.setChecked(True)  
+        self.layout.addWidget(self.auto_compress_dict_checkbox)  
+ 
+        self.process_btn  = QPushButton("开始处理") 
+        self.process_btn.clicked.connect(self.process_file)  
+        self.process_btn.setEnabled(False)  
+        self.layout.addWidget(self.process_btn)  
+ 
+        self.progress_bar  = QProgressBar() 
+        self.progress_bar.setVisible(False)  
+        self.layout.addWidget(self.progress_bar)  
+ 
+        self.status_label  = QLabel("") 
+        self.status_label.setWordWrap(True)  
+        self.layout.addWidget(self.status_label)  
+ 
+        self.log_text_edit  = QTextEdit() 
+        self.log_text_edit.setReadOnly(True)  
+        self.layout.addWidget(self.log_text_edit)  
+ 
+        self.feature_description_label  = QLabel( 
+            "本工具功能介绍：\n1. 自动检测地图字典缺失炸服并自动修复\n2. 自动删除服务器不需要的文件节约服务器空间") 
+        self.feature_description_label.setWordWrap(True)  
+        self.layout.addWidget(self.feature_description_label)  
+ 
+        self.input_file  = "" 
+        self.output_file  = "" 
+        self.bsp_path  = "" 
+        self.output_dir  = "" 
+        self.worker  = None 
+ 
+        self.load_config()  
+        self.check_for_updates()  
+ 
+    def load_config(self): 
+        config = configparser.ConfigParser() 
+        if os.path.exists(CONFIG_FILE):  
+            config.read(CONFIG_FILE)  
+            if 'Paths' in config: 
+                last_input_folder = config.get('Paths',  'last_input_folder', fallback='') 
+                last_exe_path = config.get('Paths',  'last_exe_path', fallback='') 
+                last_output_dir = config.get('Paths',  'last_output_dir', fallback='') 
+                if last_input_folder: 
+                    self.last_input_folder  = last_input_folder 
+                if last_exe_path: 
+                    self.bsp_path  = last_exe_path 
+                    self.bsp_path_label.setText(last_exe_path)  
+                if last_output_dir: 
+                    self.output_dir  = last_output_dir 
+                    self.output_dir_label.setText(last_output_dir)  
+ 
+    def save_config(self): 
+        config = configparser.ConfigParser() 
+        config['Paths'] = { 
+            'last_input_folder': os.path.dirname(self.input_file)  if self.input_file  else '', 
+            'last_exe_path': self.bsp_path,  
+            'last_output_dir': self.output_dir  
+        } 
+        with open(CONFIG_FILE, 'w') as configfile: 
+            config.write(configfile)  
+ 
+    def is_steam_no_running(self): 
+        for proc in psutil.process_iter(['name']):  
+            if proc.info['name'].lower()  in ['steam.exe',  'steam']: 
+                return False 
+        return True 
+ 
+    def select_input_file(self): 
+        if self.is_steam_no_running():  
+            QMessageBox.warning(self,  "警告", "Steam未运行,可能无法自动压制字典") 
+ 
+        initial_dir = getattr(self, 'last_input_folder', '') 
+        file_filter = "支持的格式 (*.vpk *.zip *.7z *.rar)" 
+        file_path, _ = QFileDialog.getOpenFileName(  
+            self, "选择输入文件", initial_dir, file_filter) 
+ 
+        if file_path: 
+            self.input_file  = file_path 
+            self.file_path_label.setText(file_path)  
+            self.save_config()  
+            self.process_btn.setEnabled(True)  
+            if self.output_dir  == "": 
+                self.output_dir  = os.path.dirname(file_path)  
+        else: 
+            self.process_btn.setEnabled(False)  
+ 
+    def select_output_dir(self): 
+        output_dir = QFileDialog.getExistingDirectory(self,  "选择导出位置") 
+        if output_dir: 
+            self.output_dir  = output_dir 
+            self.output_dir_label.setText(output_dir)  
+            self.save_config()  
+            self.load_config()  
+ 
+    def get_l4d2_exe_path(self, use_config=False): 
+        if use_config: 
+            config = configparser.ConfigParser() 
+            if os.path.exists(CONFIG_FILE):  
+                config.read(CONFIG_FILE)  
+                if 'Paths' in config: 
+                    exe_path = config.get('Paths',  'last_exe_path', fallback='') 
+                    if exe_path and os.path.exists(exe_path):  
+                        return exe_path 
+ 
+        file_path, _ = QFileDialog.getOpenFileName(  
+            self, "选择 left4dead2.exe",  
+            "", "Executable Files (*.exe)" 
+        ) 
+        if file_path: 
+            self.bsp_path  = file_path 
+            self.bsp_path_label.setText(file_path)  
+            self.save_config()  
+            self.load_config()  
+            return file_path 
+        return None 
+ 
+    def process_file(self): 
+        if not self.input_file:  
+            QMessageBox.warning(self,  "警告", "请先选择输入文件") 
+            return 
+ 
+        self.progress_bar.setVisible(True)  
+        self.progress_bar.setValue(0)  
+ 
+        self.worker  = FileProcessor( 
+            self.input_file,  
+            self.output_dir,  
+            self.compress_checkbox.isChecked(),  
+            self.check_dictionary_checkbox.isChecked(),  
+            self.bsp_path,  
+            self.auto_compress_dict_checkbox.isChecked(),  
+            self 
+        ) 
+ 
+        self.worker.progress_signal.connect(self.progress_bar.setValue)  
+        self.worker.message_signal.connect(self.status_label.setText)  
+        self.worker.dict_exist_signal.connect(self.log_text_edit.append)  
+        self.worker.finished_signal.connect(self.on_process_finished)  
+        self.worker.start()  
+ 
+    def on_process_finished(self, success): 
+        self.progress_bar.setVisible(False)  
+        self.process_btn.setEnabled(True)  
+ 
+        if success: 
+            if self.worker.client_output_path  is None: 
+                QMessageBox.information(  
+                    self, "完成", 
+                    f"处理完成！输出路径：{self.worker.output_path}\n"  
+                    f"点击确定后将自动打开输出目录", 
+                    QMessageBox.Ok 
+                ) 
+            else: 
+                QMessageBox.information(  
+                    self, 
+                    "处理完成", 
+                    f"已生成两份文件：\n{os.path.basename(self.worker.output_path)}\n{os.path.basename(self.worker.client_output_path)}\n"  
+                    f"前者上传服务器，后者发送玩家使用\n" 
+                    f"点击确定后将自动打开输出目录", 
+                    QMessageBox.Ok 
+                ) 
+ 
+            output_dir = os.path.dirname(self.worker.output_path)  
+            self.worker.client_output_path  = None 
+            if sys.platform  == 'win32': 
+                os.startfile(output_dir)  
+            elif sys.platform  == 'darwin': 
+                subprocess.Popen(['open', output_dir]) 
+            else: 
+                subprocess.Popen(['xdg-open', output_dir]) 
+        else: 
+            QMessageBox.critical(self,  "错误", "处理过程中出现错误") 
+ 
+    def check_for_updates(self): 
+        self.update_checker  = UpdateChecker() 
+        self.update_checker.update_available_signal.connect(self.show_update_dialog)  
+        self.update_checker.no_update_signal.connect(self.show_no_update_message)  
+        self.update_checker.start()  
+ 
+    def show_update_dialog(self, download_url): 
+        reply = QMessageBox.question(self,  "发现新版本", 
+                                     "检测到新版本可用，是否立即更新？", 
+                                     QMessageBox.Yes | QMessageBox.No) 
+        if reply == QMessageBox.Yes: 
+            self.download_update(download_url)  
+ 
+    def show_no_update_message(self): 
+        QMessageBox.information(  
+            self, 
+            "更新检查", 
+            f"当前已是最新版本 (v{CURRENT_VERSION})", 
+            QMessageBox.Ok 
+        ) 
+ 
+    def download_update(self, download_url): 
+        self.progress  = QProgressDialog("正在下载更新...", "取消", 0, 100, self) 
+        self.progress.setWindowModality(Qt.WindowModal)  
+ 
+        self.update_downloader  = UpdateDownloader(download_url) 
+        self.update_downloader.progress_signal.connect(self.progress.setValue)  
+        self.update_downloader.finished_signal.connect(self.apply_update)  
+        self.update_downloader.start()  
+ 
+    def apply_update(self): 
+        try: 
+            with zipfile.ZipFile("update.zip",  'r') as zip_ref: 
+                zip_ref.extractall(os.getcwd())  
+            os.remove("update.zip")  
+            QMessageBox.information(self,  "更新完成", "程序将在重启后生效") 
+            self.restart_application()  
+        except Exception as e: 
+            QMessageBox.critical(self,  "更新失败", f"错误信息: {str(e)}") 
+ 
+    def restart_application(self): 
+        python = sys.executable  
+        os.execl(python,  python, *sys.argv) 
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
