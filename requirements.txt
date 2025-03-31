@@ -26,6 +26,5 @@ requests==2.32.3
 setuptools==75.8.0
 texttable==1.7.0
 urllib3==2.3.0
-vpk==1.4.0
 wheel==0.45.1
 win-inet-pton==1.1.0
