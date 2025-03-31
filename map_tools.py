@@ -69,10 +69,10 @@ class MapBuilder:
             "+map", map_name, "-stringtabledictionary", "-buildcubemaps"
         ] 
         current_time = datetime.now().strftime("%Y-%m-%d  %H:%M:%S")
-        self.dict_exist_signal.emit(f"Progress:[{current_time}]正在重建字典...") 
+        self.dict_exist_signal.emit(f"Progress:[{current_time}]正在重建字典和反射...") 
         self._run_process(command) 
         current_time2 = datetime.now().strftime("%Y-%m-%d  %H:%M:%S")
-        self.dict_exist_signal.emit(f"Progress:[{current_time2}]字典重建完成...")
+        self.dict_exist_signal.emit(f"Progress:[{current_time2}]字典和反射重建完成...")
         self._restore_map_file(target_path) 
  
  
