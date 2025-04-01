@@ -16,9 +16,8 @@ import re
 import psutil
 import requests
 from packaging import version
-import time
 
-CURRENT_VERSION = "1.0.1"
+CURRENT_VERSION = "1.0.2"
 UPDATE_CHECK_URL = "https://api.github.com/repos/Mineralcr/l4d2_Map_Tools/releases/latest"
 CONFIG_FILE = "map_tools_config.ini"
 
@@ -92,17 +91,17 @@ class MapBuilder:
         self.file_name = os.path.basename(original_bsp_path)
         self.l4d2_exe_path = exe_path
         self.l4d2_maps_path = os.path.join(
-            os.path.dirname(exe_path),
-            "left4dead2",
-            "maps"
+        os.path.dirname(exe_path),
+        "left4dead2",
+        "maps"
         )
         self.dict_exist_signal = dict_exist_signal
 
     def _copy_map_file(self):
         if not self.l4d2_exe_path:
-            raise ValueError("未选择left4dead2.exe        路径")
+            raise ValueError("未选择left4dead2.exe 路径")
+        
         target_path = os.path.join(self.l4d2_maps_path, self.file_name)
-        print(target_path)
         shutil.copy2(self.original_bsp_path, target_path)
         map_name = self.file_name.replace(".bsp", "")
         return target_path, map_name
@@ -110,39 +109,45 @@ class MapBuilder:
     def _run_process(self, command):
         try:
             process = subprocess.Popen(
-                command,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                creationflags=subprocess.CREATE_NO_WINDOW
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            creationflags=subprocess.CREATE_NO_WINDOW
             )
             process.communicate()
 
         except Exception as e:
-            current_time = datetime.now().strftime("%Y-%m-%d   %H:%M:%S")
+            current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             self.dict_exist_signal.emit(f"[{current_time}] 启动失败: {str(e)}")
             self.dict_exist_signal.emit(
-                f"[{current_time}] 提示：如果路径正确但启动失败，建议通过Steam验证游戏文件完整性,并保证已连接steam")
+            f"[{current_time}] 提示：如果路径正确但启动失败，建议通过Steam验证游戏文件完整性,并保证已连接steam")
 
     def _restore_map_file(self, target_path):
-        shutil.copy2(target_path, self.original_bsp_path)
-        os.remove(target_path)
+        current_time2 = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        if os.path.getsize(target_path) != os.path.getsize(self.original_bsp_path):
+            shutil.copy2(target_path, self.original_bsp_path)
+            self.dict_exist_signal.emit(f"Progress:[{current_time2}] 反射和字典重建完成...")
+            os.remove(target_path)
+            return True
+        else:
+            self.dict_exist_signal.emit(f"Progress:[{current_time2}] 反射和字典重建失败!请尝试手动重建!")
+            os.remove(target_path)
+            return False
+
 
     def start_dictionary_process(self):
         target_path, map_name = self._copy_map_file()
         command = [
-            self.l4d2_exe_path,
-            "-steam", "-insecure", "-novid",
-            "-hidden", "-nosound", "-noborder",
-            "-x", "4096", "-y", "2160","-heapsize", "2097151",
-            "+map", map_name, "-stringtabledictionary", "-buildcubemaps"
+        self.l4d2_exe_path,
+        "-steam", "-insecure", "-novid",
+        "-hidden", "-nosound", "-noborder",
+        "-x", "4096", "-y", "2160","-heapsize", "2097151",
+        "+map", map_name, "-stringtabledictionary", "-buildcubemaps"
         ]
-        current_time = datetime.now().strftime("%Y-%m-%d   %H:%M:%S")
+        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         self.dict_exist_signal.emit(f"Progress:[{current_time}] 正在重建字典和反射...")
         self._run_process(command)
-        current_time2 = datetime.now().strftime("%Y-%m-%d   %H:%M:%S")
-        self.dict_exist_signal.emit(f"Progress:[{current_time2}] 反射和字典重建完成...")
-        self._restore_map_file(target_path)
-
+        return self._restore_map_file(target_path)
 
 def read_string(file):
     result = b''
@@ -168,7 +173,6 @@ class FileProcessor(QThread):
         self.compress_vpk = compress_vpk
         self.check_dictionary = check_dictionary
         self.bsp_path = bsp_path
-        print(self.output_path)
         self.temp_dir = os.path.join(self.output_path, "temp_vpk")
         self.temp_dir_file = os.path.join(self.output_path, "temp_vpk_file")
         self.temp_client_dir_file = os.path.join(self.output_path, "temp_vpk_client_file")
@@ -182,66 +186,87 @@ class FileProcessor(QThread):
 
     def run(self):
         try:
-            if self.input_path.lower().endswith(('.zip', '.7z', '.rar')):
+            if self.input_path.lower().endswith(('.zip',  '.7z', '.rar')):
                 current_time = datetime.now().strftime("%Y-%m-%d    %H:%M:%S")
                 message = f"[{current_time}]正在解压文件..."
-                self.emit_same_message(message)
-                self.extract_archive()
+                self.emit_same_message(message) 
+                self.extract_archive() 
                 vpk_files = [
-                    os.path.join(root, f)
-                    for root, dirs, files in os.walk(self.temp_dir)
+                    os.path.join(root,  f)
+                    for root, dirs, files in os.walk(self.temp_dir) 
                     for f in files
-                    if f.lower().endswith('.vpk')
+                    if f.lower().endswith('.vpk') 
                 ]
                 if not vpk_files:
                     raise Exception("压缩包中没有找到VPK文件")
 
-                if os.path.exists(self.temp_dir_file):
-                    shutil.rmtree(self.temp_dir_file, ignore_errors=True)
-                os.makedirs(self.temp_dir_file)
-                for vpk_file in vpk_files:
-                    original_vpk = vpk.open(vpk_file)
-                    for file_path in original_vpk:
-                        file = original_vpk.get_file(file_path)
-                        dest_path = os.path.join(self.temp_dir_file, file_path)
-                        os.makedirs(os.path.dirname(dest_path), exist_ok=True)
-                        with open(dest_path, 'wb') as f:
-                            f.write(file.read())
-                self.input_path = vpk_files[0]
-            elif not self.input_path.lower().endswith('.vpk'):
+                if len(vpk_files) > 1:
+                    if os.path.exists(self.temp_dir_file): 
+                        shutil.rmtree(self.temp_dir_file,  ignore_errors=True)
+                    os.makedirs(self.temp_dir_file) 
+                    for vpk_file in vpk_files:
+                        original_vpk = vpk.open(vpk_file) 
+                        for file_path in original_vpk:
+                            file = original_vpk.get_file(file_path) 
+                            dest_path = os.path.join(self.temp_dir_file,  file_path)
+                            os.makedirs(os.path.dirname(dest_path),  exist_ok=True)
+                            with open(dest_path, 'wb') as f:
+                                f.write(file.read()) 
+                else:
+                    self.input_path  = vpk_files[0]
+            elif not self.input_path.lower().endswith('.vpk'): 
                 raise Exception("输入文件不是VPK文件")
+
+            if not os.path.exists(self.temp_dir_file): 
+                if os.path.exists(self.temp_dir_file): 
+                    shutil.rmtree(self.temp_dir_file,  ignore_errors=True)
+                os.makedirs(self.temp_dir_file) 
+
+            if not os.listdir(self.temp_dir_file): 
+                original_vpk = vpk.open(self.input_path) 
+                for file_path in original_vpk:
+                    file = original_vpk.get_file(file_path) 
+                    dest_path = os.path.join(self.temp_dir_file,  file_path)
+                    os.makedirs(os.path.dirname(dest_path),  exist_ok=True)
+                    with open(dest_path, 'wb') as f:
+                        f.write(file.read()) 
 
             current_time = datetime.now().strftime("%Y-%m-%d    %H:%M:%S")
             message = f"[{current_time}]正在处理VPK文件..."
-            self.emit_same_message(message)
-            self.process_vpk()
+            self.emit_same_message(message) 
+            self.process_vpk() 
 
-            if self.compress_vpk:
+            if self.compress_vpk: 
                 current_time = datetime.now().strftime("%Y-%m-%d    %H:%M:%S")
                 message = f"[{current_time}]正在压缩文件..."
-                self.emit_same_message(message)
-                self.compress_output()
+                self.emit_same_message(message) 
+                self.compress_output() 
 
             current_time = datetime.now().strftime("%Y-%m-%d    %H:%M:%S")
             message = f"[{current_time}]处理完成！"
-            self.emit_same_message(message)
-            self.finished_signal.emit(True)
-            shutil.rmtree(self.temp_dir_file, ignore_errors=True)
+            self.emit_same_message(message) 
+            self.finished_signal.emit(True) 
+            shutil.rmtree(self.temp_dir_file,  ignore_errors=True)
 
-        except Exception as e:
-            current_time = datetime.now().strftime("%Y-%m-%d    %H:%M:%S")
-            message = f"[{current_time}]错误: {str(e)}"
-            self.emit_same_message(message)
-            self.finished_signal.emit(False)
-        finally:
-            if os.path.exists(self.temp_dir):
-                shutil.rmtree(self.temp_dir, ignore_errors=True)
-            if os.path.exists(self.temp_dir_file):
-                shutil.rmtree(self.temp_dir_file, ignore_errors=True)
-            if os.path.exists(self.temp_client_dir_file):
-                shutil.rmtree(self.temp_client_dir_file, ignore_errors=True)
-            if os.path.exists(self.temp_dir):
-                shutil.rmtree(self.temp_dir, ignore_errors=True)
+        except Exception as e: 
+            current_time = datetime.now().strftime("%Y-%m-%d     %H:%M:%S") 
+            message = f"[{current_time}]错误: {str(e)}" 
+            self.emit_same_message(message)  
+            self.finished_signal.emit(False)  
+        finally: 
+            if os.path.exists(self.temp_dir):  
+                for proc in psutil.process_iter():  
+                    try: 
+                        for item in proc.open_files():  
+                            if item.path.startswith(self.temp_dir):  
+                                proc.terminate()  
+                    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess): 
+                        pass 
+                shutil.rmtree(self.temp_dir,  ignore_errors=True) 
+            if os.path.exists(self.temp_dir_file):  
+                shutil.rmtree(self.temp_dir_file,  ignore_errors=True) 
+            if os.path.exists(self.temp_client_dir_file):  
+                shutil.rmtree(self.temp_client_dir_file,  ignore_errors=True) 
 
 
     def extract_archive(self):
@@ -279,6 +304,7 @@ class FileProcessor(QThread):
                 self.emit_same_message(message)
 
             b = 0
+            d = 0
             for bsp_file in bsp_files:
                 with open(bsp_file, 'rb') as file:
                     content = file.read()
@@ -301,7 +327,8 @@ class FileProcessor(QThread):
                             self.emit_same_message(message)
                             builder = MapBuilder(bsp_file, exe_path, self.dict_exist_signal)
                             # builder.start_cubemap_process()
-                            builder.start_dictionary_process()
+                            if builder.start_dictionary_process():
+                                d += 1
                             b += 1
                         else:
                             reply = QMessageBox.question(self.main_window, "确认操作",
@@ -320,7 +347,8 @@ class FileProcessor(QThread):
                                 self.emit_same_message(message)
                                 builder = MapBuilder(bsp_file, exe_path, self.dict_exist_signal)
                                 # builder.start_cubemap_process()
-                                builder.start_dictionary_process()
+                                if builder.start_dictionary_process():
+                                    d += 1
                             b += 1
 
             if b == 0:
@@ -329,7 +357,10 @@ class FileProcessor(QThread):
                 self.emit_same_message(message)
             else:
                 current_time = datetime.now().strftime("%Y-%m-%d    %H:%M:%S")
-                message = f"[{current_time}]字典检测完成,发现 {b} 个缺少字典的小图,已进行处理"
+                if b == d:
+                    message = f"[{current_time}]字典检测完成,发现 {b} 个缺少字典的小图,已进行处理"
+                else:
+                    message = f"[{current_time}]字典检测完成,发现 {b} 个缺少字典的小图,已处理{d}个，{b-d}个处理失败"
                 self.emit_same_message(message)
 
                 shutil.copytree(self.temp_dir_file, self.temp_client_dir_file)
