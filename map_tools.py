@@ -3,7 +3,7 @@ import subprocess
 import os
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QPushButton, QLabel, QFileDialog, QCheckBox,
-                             QMessageBox, QProgressBar, QTextEdit, QProgressDialog)
+                             QMessageBox, QProgressBar, QTextEdit, QProgressDialog, QLineEdit)
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 import zipfile
 import py7zr
@@ -17,7 +17,7 @@ import psutil
 import requests
 from packaging import version
 
-CURRENT_VERSION = "1.0.2"
+CURRENT_VERSION = "1.0.3"
 UPDATE_CHECK_URL = "https://api.github.com/repos/Mineralcr/l4d2_Map_Tools/releases/latest"
 CONFIG_FILE = "map_tools_config.ini"
 
@@ -134,16 +134,17 @@ class MapBuilder:
             os.remove(target_path)
             return False
 
-
-    def start_dictionary_process(self):
+    def start_dictionary_process(self, launch_options):
         target_path, map_name = self._copy_map_file()
         command = [
-        self.l4d2_exe_path,
-        "-steam", "-insecure", "-novid",
-        "-hidden", "-nosound", "-noborder",
-        "-x", "4096", "-y", "2160","-heapsize", "2097151",
-        "+map", map_name, "-stringtabledictionary", "-buildcubemaps"
+            self.l4d2_exe_path,
+            "-steam", "-novid",
+            "-hidden", "-nosound", "-noborder",
+            "-heapsize", "2097151",
+            "+map", map_name, "-stringtabledictionary", "-buildcubemaps"
         ]
+        command.extend(launch_options)
+
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         self.dict_exist_signal.emit(f"Progress:[{current_time}] 正在重建字典和反射...")
         self._run_process(command)
@@ -178,6 +179,7 @@ class FileProcessor(QThread):
         self.temp_client_dir_file = os.path.join(self.output_path, "temp_vpk_client_file")
         self.auto_compress_dict = auto_compress_dict
         self.main_window = main_window
+        self.launch_options = main_window.launch_options
         self.client_output_path = None
 
     def emit_same_message(self, message):
@@ -327,7 +329,7 @@ class FileProcessor(QThread):
                             self.emit_same_message(message)
                             builder = MapBuilder(bsp_file, exe_path, self.dict_exist_signal)
                             # builder.start_cubemap_process()
-                            if builder.start_dictionary_process():
+                            if builder.start_dictionary_process(self.launch_options):
                                 d += 1
                             b += 1
                         else:
@@ -347,7 +349,7 @@ class FileProcessor(QThread):
                                 self.emit_same_message(message)
                                 builder = MapBuilder(bsp_file, exe_path, self.dict_exist_signal)
                                 # builder.start_cubemap_process()
-                                if builder.start_dictionary_process():
+                                if builder.start_dictionary_process(self.launch_options):
                                     d += 1
                             b += 1
 
@@ -455,7 +457,7 @@ class MainWindow(QMainWindow):
  
         self.setWindowIcon(self.style().standardIcon(42))  
         self.setWindowTitle("   洛琪地图简易工具") 
-        self.setGeometry(100,  100, 400, 750) 
+        self.setGeometry(100,  100, 400, 850)
  
         self.central_widget  = QWidget() 
         self.setCentralWidget(self.central_widget)  
@@ -544,7 +546,25 @@ class MainWindow(QMainWindow):
  
         self.auto_compress_dict_checkbox  = QCheckBox("开启自动压字典[如果字典缺失]") 
         self.auto_compress_dict_checkbox.setChecked(True)  
-        self.layout.addWidget(self.auto_compress_dict_checkbox)  
+        self.layout.addWidget(self.auto_compress_dict_checkbox)
+
+        self.launch_options_label = QLabel("额外启动参数（用空格分隔）：")
+        self.layout.addWidget(self.launch_options_label)
+
+        self.launch_options_input = QLineEdit()
+        self.launch_options_input.setPlaceholderText("例如：-insecure")
+        self.launch_options_input.textChanged.connect(self.validate_launch_options)
+        self.layout.addWidget(self.launch_options_input)
+
+        self.command_preview_label = QLabel("完整启动项命令预览：")
+        self.layout.addWidget(self.command_preview_label)
+
+        self.command_preview = QTextEdit()
+        self.command_preview.setReadOnly(True)
+        self.command_preview.setMaximumHeight(80)
+        self.layout.addWidget(self.command_preview)
+
+        self.launch_options = []
  
         self.process_btn  = QPushButton("开始处理") 
         self.process_btn.clicked.connect(self.process_file)  
@@ -575,34 +595,72 @@ class MainWindow(QMainWindow):
         self.worker  = None 
  
         self.load_config()  
-        self.check_for_updates()  
+        self.check_for_updates()
+        self.update_command_preview()
+
+    def validate_launch_options(self):
+        input_text = self.launch_options_input.text()
+        valid = True
+        options = []
+
+        for opt in input_text.split():
+            if not opt.startswith(('-', '+')):
+                QMessageBox.warning(self, "无效参数", f"参数 '{opt}' 必须以 '-' 或 '+' 开头")
+                valid = False
+                break
+            options.append(opt)
+
+        if valid:
+            self.launch_options = options
+            self.update_command_preview()
+        else:
+            self.launch_options_input.setStyleSheet("border: 1px solid red;")
+            self.command_preview.setPlainText("包含无效参数！")
+        return valid
+
+    def update_command_preview(self):
+        base_command = [
+            "-steam", "-novid",
+            "-hidden", "-nosound", "-noborder",
+            "-heapsize", "2097151",
+            "+map [MAPNAME]", "-stringtabledictionary", "-buildcubemaps"
+        ]
+        full_command = [self.bsp_path] + base_command + self.launch_options
+        preview_text = " ".join(full_command)
+        self.command_preview.setPlainText(preview_text)
+        self.launch_options_input.setStyleSheet("")
  
-    def load_config(self): 
-        config = configparser.ConfigParser() 
-        if os.path.exists(CONFIG_FILE):  
-            config.read(CONFIG_FILE)  
-            if 'Paths' in config: 
-                last_input_folder = config.get('Paths',  'last_input_folder', fallback='') 
-                last_exe_path = config.get('Paths',  'last_exe_path', fallback='') 
-                last_output_dir = config.get('Paths',  'last_output_dir', fallback='') 
-                if last_input_folder: 
-                    self.last_input_folder  = last_input_folder 
-                if last_exe_path: 
-                    self.bsp_path  = last_exe_path 
-                    self.bsp_path_label.setText(last_exe_path)  
-                if last_output_dir: 
-                    self.output_dir  = last_output_dir 
-                    self.output_dir_label.setText(last_output_dir)  
- 
-    def save_config(self): 
-        config = configparser.ConfigParser() 
-        config['Paths'] = { 
-            'last_input_folder': os.path.dirname(self.input_file)  if self.input_file  else '', 
-            'last_exe_path': self.bsp_path,  
-            'last_output_dir': self.output_dir  
-        } 
-        with open(CONFIG_FILE, 'w') as configfile: 
-            config.write(configfile)  
+    def load_config(self):
+        config = configparser.ConfigParser()
+        if os.path.exists(CONFIG_FILE):
+            config.read(CONFIG_FILE)
+            if 'Paths' in config:
+                last_input_folder = config.get('Paths',  'last_input_folder', fallback='')
+                last_exe_path = config.get('Paths',  'last_exe_path', fallback='')
+                last_output_dir = config.get('Paths',  'last_output_dir', fallback='')
+                if 'launch_options' in config['Paths']:
+                    opts = config.get('Paths', 'launch_options', fallback='')
+                    self.launch_options_input.setText(opts)
+                    self.validate_launch_options()
+                if last_input_folder:
+                    self.last_input_folder  = last_input_folder
+                if last_exe_path:
+                    self.bsp_path  = last_exe_path
+                    self.bsp_path_label.setText(last_exe_path)
+                if last_output_dir:
+                    self.output_dir  = last_output_dir
+                    self.output_dir_label.setText(last_output_dir)
+
+    def save_config(self):
+        config = configparser.ConfigParser()
+        config['Paths'] = {
+            'last_input_folder': os.path.dirname(self.input_file) if self.input_file else '',
+            'last_exe_path': self.bsp_path,
+            'last_output_dir': self.output_dir,
+            'launch_options': " ".join(self.launch_options)
+        }
+        with open(CONFIG_FILE, 'w') as configfile:
+            config.write(configfile)
  
     def is_steam_no_running(self): 
         for proc in psutil.process_iter(['name']):  
@@ -662,7 +720,11 @@ class MainWindow(QMainWindow):
     def process_file(self): 
         if not self.input_file:  
             QMessageBox.warning(self,  "警告", "请先选择输入文件") 
-            return 
+            return
+
+        if not self.validate_launch_options():
+            QMessageBox.warning(self, "警告", "启动项参数无效")
+            return
  
         self.progress_bar.setVisible(True)  
         self.progress_bar.setValue(0)  
