@@ -1,8 +1,9 @@
 import shutil
 import subprocess
+import threading
 import os
-from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
-                             QPushButton, QLabel, QFileDialog, QCheckBox,
+from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+                             QPushButton, QLabel, QFileDialog, QCheckBox, QInputDialog,
                              QMessageBox, QProgressBar, QTextEdit, QProgressDialog, QLineEdit)
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 import zipfile
@@ -13,11 +14,13 @@ import sys
 from datetime import datetime
 import configparser
 import re
+import time
 import psutil
 import requests
 from packaging import version
+import traceback
 
-CURRENT_VERSION = "1.0.4"
+CURRENT_VERSION = "1.0.5"
 UPDATE_CHECK_URL = "https://api.github.com/repos/Mineralcr/l4d2_Map_Tools/releases/latest"
 CONFIG_FILE = "map_tools_config.ini"
 
@@ -159,6 +162,29 @@ def read_string(file):
         result += char
     return result.decode('utf-8')
 
+def remove_directory_with_retries(file_path, max_retries=5):
+    retries = 0
+    while retries < max_retries:
+        if os.path.exists(file_path):
+            try:
+                if os.path.isfile(file_path): 
+                    os.remove(file_path)
+                elif os.path.isdir(file_path): 
+                    shutil.rmtree(file_path, ignore_errors=False)
+                if not os.path.exists(file_path):
+                    return True
+            except Exception as e:
+                print(f"Deletion attempt {retries + 1} failed:")
+                print(f"Error type: {type(e).__name__}")
+                print(f"Error details: {str(e)}")
+                print("Traceback:")
+                traceback.print_exc()
+            
+            retries += 1
+            time.sleep(1) 
+        else:
+            return True
+    return False
 
 class FileProcessor(QThread):
     progress_signal = pyqtSignal(int)
@@ -166,10 +192,11 @@ class FileProcessor(QThread):
     dict_exist_signal = pyqtSignal(str)
     finished_signal = pyqtSignal(bool)
 
-    def __init__(self, input_path, output_path, compress_vpk, check_dictionary, bsp_path, auto_compress_dict,
+    def __init__(self, input_path, rename_path, output_path, compress_vpk, check_dictionary, bsp_path, auto_compress_dict,
                  main_window):
         super().__init__()
         self.input_path = input_path
+        self.rename_path = rename_path
         self.output_path = output_path
         self.compress_vpk = compress_vpk
         self.check_dictionary = check_dictionary
@@ -204,16 +231,12 @@ class FileProcessor(QThread):
 
                 if len(vpk_files) > 1:
                     if os.path.exists(self.temp_dir_file): 
-                        shutil.rmtree(self.temp_dir_file,  ignore_errors=True)
+                        remove_directory_with_retries(self.temp_dir_file)
                     os.makedirs(self.temp_dir_file) 
                     for vpk_file in vpk_files:
-                        original_vpk = vpk.open(vpk_file) 
-                        for file_path in original_vpk:
-                            file = original_vpk.get_file(file_path) 
-                            dest_path = os.path.join(self.temp_dir_file,  file_path)
-                            os.makedirs(os.path.dirname(dest_path),  exist_ok=True)
-                            with open(dest_path, 'wb') as f:
-                                f.write(file.read()) 
+                        thread = threading.Thread(target=self.export_vpk_files,  args=(vpk_file,)) 
+                        thread.start()  
+                        thread.join()
                 else:
                     self.input_path  = vpk_files[0]
             elif not self.input_path.lower().endswith('.vpk'): 
@@ -221,22 +244,19 @@ class FileProcessor(QThread):
 
             if not os.path.exists(self.temp_dir_file): 
                 if os.path.exists(self.temp_dir_file): 
-                    shutil.rmtree(self.temp_dir_file,  ignore_errors=True)
+                    remove_directory_with_retries(self.temp_dir_file)
                 os.makedirs(self.temp_dir_file) 
 
             if not os.listdir(self.temp_dir_file): 
-                original_vpk = vpk.open(self.input_path) 
-                for file_path in original_vpk:
-                    file = original_vpk.get_file(file_path) 
-                    dest_path = os.path.join(self.temp_dir_file,  file_path)
-                    os.makedirs(os.path.dirname(dest_path),  exist_ok=True)
-                    with open(dest_path, 'wb') as f:
-                        f.write(file.read()) 
+                thread = threading.Thread(target=self.export_vpk_files,  args=(self.input_path,))  
+                thread.start()  
+                thread.join()
 
             current_time = datetime.now().strftime("%Y-%m-%d    %H:%M:%S")
             message = f"[{current_time}]正在处理VPK文件..."
             self.emit_same_message(message) 
             self.process_vpk() 
+            remove_directory_with_retries(self.rename_path)
 
             if self.compress_vpk: 
                 current_time = datetime.now().strftime("%Y-%m-%d    %H:%M:%S")
@@ -248,7 +268,6 @@ class FileProcessor(QThread):
             message = f"[{current_time}]处理完成！"
             self.emit_same_message(message) 
             self.finished_signal.emit(True) 
-            shutil.rmtree(self.temp_dir_file,  ignore_errors=True)
 
         except Exception as e: 
             current_time = datetime.now().strftime("%Y-%m-%d     %H:%M:%S") 
@@ -256,24 +275,23 @@ class FileProcessor(QThread):
             self.emit_same_message(message)  
             self.finished_signal.emit(False)  
         finally: 
-            if os.path.exists(self.temp_dir):  
-                for proc in psutil.process_iter():  
-                    try: 
-                        for item in proc.open_files():  
-                            if item.path.startswith(self.temp_dir):  
-                                proc.terminate()  
-                    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess): 
-                        pass 
-                shutil.rmtree(self.temp_dir,  ignore_errors=True) 
-            if os.path.exists(self.temp_dir_file):  
-                shutil.rmtree(self.temp_dir_file,  ignore_errors=True) 
-            if os.path.exists(self.temp_client_dir_file):  
-                shutil.rmtree(self.temp_client_dir_file,  ignore_errors=True) 
-
+            remove_directory_with_retries(self.temp_dir)
+            remove_directory_with_retries(self.rename_path)
+            remove_directory_with_retries(self.temp_dir_file)
+            remove_directory_with_retries(self.temp_client_dir_file)
+    
+    def export_vpk_files(self, vpk_file): 
+        original_vpk = vpk.open(vpk_file)  
+        for file_path in original_vpk: 
+            file = original_vpk.get_file(file_path)  
+            dest_path = os.path.join(self.temp_dir_file,  file_path) 
+            os.makedirs(os.path.dirname(dest_path),  exist_ok=True) 
+            with open(dest_path, 'wb') as f: 
+                f.write(file.read()) 
 
     def extract_archive(self):
         if os.path.exists(self.temp_dir):
-            shutil.rmtree(self.temp_dir, ignore_errors=True)
+            remove_directory_with_retries(self.temp_dir)
         os.makedirs(self.temp_dir)
 
         if self.input_path.lower().endswith('.zip'):
@@ -291,7 +309,7 @@ class FileProcessor(QThread):
     def process_vpk(self):
         self.progress_signal.emit(30)
         if os.path.exists(self.temp_dir):
-            shutil.rmtree(self.temp_dir, ignore_errors=True)
+            remove_directory_with_retries(self.temp_dir)
         if self.check_dictionary:
             bsp_files = []
             maps_dir = os.path.join(self.temp_dir_file, "maps")
@@ -374,7 +392,7 @@ class FileProcessor(QThread):
                 self.output_path = self.client_output_path
                 self.compress_output()
                 if os.path.exists(self.temp_client_dir_file):
-                    shutil.rmtree(self.temp_client_dir_file, ignore_errors=True)
+                    remove_directory_with_retries(self.temp_client_dir_file)
 
         current_time = datetime.now().strftime("%Y-%m-%d    %H:%M:%S")
         message = f"[{current_time}]正在进行地图服务端无用资源清洗.."
@@ -438,12 +456,9 @@ class DragAndDropButton(QPushButton):
         for url in event.mimeData().urls(): 
             file_path = url.toLocalFile() 
             if file_path.lower().endswith(('.vpk',  '.zip', '.7z', '.rar')):
- 
+
                 main_window = self.parent().parent().window() 
-                main_window.input_file  = file_path 
-                main_window.file_path_label.setText(file_path) 
-                main_window.save_config() 
-                main_window.process_btn.setEnabled(True) 
+                main_window.drop_input_file(file_path)
                 if main_window.output_dir  == "":
                     main_window.output_dir  = os.path.dirname(file_path) 
              
@@ -456,8 +471,8 @@ class MainWindow(QMainWindow):
         super().__init__() 
  
         self.setWindowIcon(self.style().standardIcon(42))  
-        self.setWindowTitle("   洛琪地图简易工具") 
-        self.setGeometry(100,  100, 400, 850)
+        self.setWindowTitle("    洛琪地图简易工具") 
+        self.setGeometry(100,  100, 400, 850) 
  
         self.central_widget  = QWidget() 
         self.setCentralWidget(self.central_widget)  
@@ -468,7 +483,7 @@ class MainWindow(QMainWindow):
         self.layout.setContentsMargins(20,  20, 20, 20) 
         self.central_widget.setLayout(self.layout)  
  
-        self.setStyleSheet("""   
+        self.setStyleSheet("""  
             QWidget { 
                 font-family: "宋体", "Times New Roman", sans-serif; 
                 font-size: 14px; 
@@ -503,7 +518,7 @@ class MainWindow(QMainWindow):
  
         self.title_label  = QLabel("洛琪地图简易工具") 
         self.title_label.setAlignment(Qt.AlignCenter)  
-        self.title_label.setStyleSheet("""   
+        self.title_label.setStyleSheet("""  
             font-family: "黑体"; 
             font-size: 24px; 
             font-weight: bold; 
@@ -520,11 +535,11 @@ class MainWindow(QMainWindow):
         self.file_path_label.setWordWrap(True)  
         self.layout.addWidget(self.file_path_label)  
  
-        self.select_bsp_path_btn  = QPushButton("选择left4dead2.exe   路径[自动压字典功能才需要]") 
+        self.select_bsp_path_btn  = QPushButton("选择left4dead2.exe    路径[自动压字典功能才需要]") 
         self.select_bsp_path_btn.clicked.connect(self.get_l4d2_exe_path)  
         self.layout.addWidget(self.select_bsp_path_btn)  
  
-        self.bsp_path_label  = QLabel("未选择left4dead2.exe   路径") 
+        self.bsp_path_label  = QLabel("未选择left4dead2.exe    路径") 
         self.bsp_path_label.setWordWrap(True)  
         self.layout.addWidget(self.bsp_path_label)  
  
@@ -536,35 +551,45 @@ class MainWindow(QMainWindow):
         self.output_dir_label.setWordWrap(True)  
         self.layout.addWidget(self.output_dir_label)  
  
+        checkbox_layout1 = QHBoxLayout() 
+        checkbox_layout2 = QHBoxLayout()
+
         self.compress_checkbox  = QCheckBox("自动压缩为ZIP文件") 
         self.compress_checkbox.setChecked(True)  
-        self.layout.addWidget(self.compress_checkbox)  
+        checkbox_layout1.addWidget(self.compress_checkbox)  
  
-        self.check_dictionary_checkbox  = QCheckBox("执行字典存在性检测") 
+        self.check_dictionary_checkbox  = QCheckBox("字典存在性检测") 
         self.check_dictionary_checkbox.setChecked(True)  
-        self.layout.addWidget(self.check_dictionary_checkbox)  
+        checkbox_layout1.addWidget(self.check_dictionary_checkbox)  
  
-        self.auto_compress_dict_checkbox  = QCheckBox("开启自动压字典[如果字典缺失]") 
+        self.auto_compress_dict_checkbox  = QCheckBox("开启自动压字典") 
         self.auto_compress_dict_checkbox.setChecked(True)  
-        self.layout.addWidget(self.auto_compress_dict_checkbox)
-
-        self.launch_options_label = QLabel("额外启动参数（用空格分隔）：")
-        self.layout.addWidget(self.launch_options_label)
-
-        self.launch_options_input = QLineEdit()
-        self.launch_options_input.setPlaceholderText("例如：-insecure")
-        self.launch_options_input.textChanged.connect(self.validate_launch_options)
-        self.layout.addWidget(self.launch_options_input)
-
-        self.command_preview_label = QLabel("完整启动项命令预览：")
-        self.layout.addWidget(self.command_preview_label)
-
-        self.command_preview = QTextEdit()
-        self.command_preview.setReadOnly(True)
-        self.command_preview.setMaximumHeight(80)
-        self.layout.addWidget(self.command_preview)
-
-        self.launch_options = []
+        checkbox_layout2.addWidget(self.auto_compress_dict_checkbox)  
+ 
+        self.auto_rename_vpk_checkbox  = QCheckBox("图名非法字符检测") 
+        self.auto_rename_vpk_checkbox.setChecked(True)  
+        checkbox_layout2.addWidget(self.auto_rename_vpk_checkbox)  
+ 
+        self.layout.addLayout(checkbox_layout1)  
+        self.layout.addLayout(checkbox_layout2)
+ 
+        self.launch_options_label  = QLabel("额外启动参数（用空格分隔）：") 
+        self.layout.addWidget(self.launch_options_label)  
+ 
+        self.launch_options_input  = QLineEdit() 
+        self.launch_options_input.setPlaceholderText(" 例如：-insecure") 
+        self.launch_options_input.textChanged.connect(self.validate_launch_options)  
+        self.layout.addWidget(self.launch_options_input)  
+ 
+        self.command_preview_label  = QLabel("完整启动项命令预览：") 
+        self.layout.addWidget(self.command_preview_label)  
+ 
+        self.command_preview  = QTextEdit() 
+        self.command_preview.setReadOnly(True)  
+        self.command_preview.setMaximumHeight(80)  
+        self.layout.addWidget(self.command_preview)  
+ 
+        self.launch_options  = [] 
  
         self.process_btn  = QPushButton("开始处理") 
         self.process_btn.clicked.connect(self.process_file)  
@@ -589,13 +614,14 @@ class MainWindow(QMainWindow):
         self.layout.addWidget(self.feature_description_label)  
  
         self.input_file  = "" 
+        self.rename_path  = "" 
         self.output_file  = "" 
         self.bsp_path  = "" 
         self.output_dir  = "" 
         self.worker  = None 
  
         self.load_config()  
-        self.check_for_updates()
+        self.check_for_updates()  
         self.update_command_preview()
 
     def validate_launch_options(self):
@@ -668,22 +694,72 @@ class MainWindow(QMainWindow):
                 return False 
         return True 
  
-    def select_input_file(self): 
-        if self.is_steam_no_running():  
-            QMessageBox.warning(self,  "警告", "Steam未运行,可能无法自动压制字典") 
- 
+    def is_english_only(self, text):
+        return bool(re.match(r'^[a-zA-Z0-9_\-\. ]+$', text))
+    
+    def drop_input_file(self, drop_path):
+        self.process_input_file(drop_path)
+
+    def select_input_file(self):
         initial_dir = getattr(self, 'last_input_folder', '') 
         file_filter = "支持的格式 (*.vpk *.zip *.7z *.rar)" 
         file_path, _ = QFileDialog.getOpenFileName(  
-            self, "选择输入文件", initial_dir, file_filter) 
+            self, "选择输入文件", initial_dir, file_filter)
+
+        self.process_input_file(file_path)
+
+    def process_input_file(self, file_path): 
+        if self.is_steam_no_running():  
+            QMessageBox.warning(self, "警告", "Steam未运行,可能无法自动压制字典") 
  
         if file_path: 
-            self.input_file  = file_path 
+            if self.auto_rename_vpk_checkbox.isChecked():
+                file_name = os.path.basename(file_path)
+                base_name = os.path.splitext(file_name)[0]
+                extension = os.path.splitext(file_name)[1]
+                
+                if not self.is_english_only(base_name):
+                    new_name, ok = QInputDialog.getText(
+                        self, 
+                        "重命名文件", 
+                        "检测到文件名含有特殊字符或中文，可能在Linux服务器上造成乱码。\n请输入英文文件名：",
+                        QLineEdit.Normal
+                    )
+                    
+                    if ok and new_name:
+                        if not self.is_english_only(new_name):
+                            QMessageBox.warning(self, "警告", "文件名仍包含非英文字符，请使用纯英文、数字和下划线")
+                        else:
+                            new_path = os.path.join(os.path.dirname(file_path), new_name + extension)
+                            if os.path.exists(new_path):
+                                reply = QMessageBox.question(
+                                    self, 
+                                    "文件已存在", 
+                                    f"文件 {new_name + extension} 已存在，是否覆盖？",
+                                    QMessageBox.Yes | QMessageBox.No
+                                )
+                                
+                                if reply == QMessageBox.No:
+                                    return
+                            
+                            try:
+                                shutil.copy2(file_path, new_path)
+                                QMessageBox.information(
+                                    self, 
+                                    "重命名成功", 
+                                    f"已创建重命名后的文件副本：{new_name + extension}"
+                                )
+                                file_path = new_path
+                                self.rename_path = new_path
+                            except Exception as e:
+                                QMessageBox.critical(self, "错误", f"重命名文件时出错: {str(e)}")
+            
+            self.input_file = file_path 
             self.file_path_label.setText(file_path)  
             self.save_config()  
             self.process_btn.setEnabled(True)  
-            if self.output_dir  == "": 
-                self.output_dir  = os.path.dirname(file_path)  
+            if self.output_dir == "": 
+                self.output_dir = os.path.dirname(file_path)  
         else: 
             self.process_btn.setEnabled(False)  
  
@@ -731,6 +807,7 @@ class MainWindow(QMainWindow):
  
         self.worker  = FileProcessor( 
             self.input_file,  
+            self.rename_path,
             self.output_dir,  
             self.compress_checkbox.isChecked(),  
             self.check_dictionary_checkbox.isChecked(),  
