@@ -17,7 +17,7 @@ import psutil
 import requests
 from packaging import version
 
-CURRENT_VERSION = "1.0.3"
+CURRENT_VERSION = "1.0.4"
 UPDATE_CHECK_URL = "https://api.github.com/repos/Mineralcr/l4d2_Map_Tools/releases/latest"
 CONFIG_FILE = "map_tools_config.ini"
 
@@ -810,17 +810,36 @@ class MainWindow(QMainWindow):
  
     def apply_update(self): 
         try: 
+            file_list = []
             with zipfile.ZipFile("update.zip",  'r') as zip_ref: 
-                zip_ref.extractall(os.getcwd())  
+                for filename in zip_ref.namelist():
+                    zip_ref.extractall(os.getcwd())  
+                    file_list.append(str(filename))
             os.remove("update.zip")  
             QMessageBox.information(self,  "更新完成", "程序将在重启后生效") 
-            self.restart_application()  
+            self.update_and_replace(file_list[0])  
         except Exception as e: 
             QMessageBox.critical(self,  "更新失败", f"错误信息: {str(e)}") 
+    
+    def update_and_replace(self, filename): 
+        target_exe = "map_tools.exe"  
+
+        bat_content = f""" 
+        @echo off 
+        ping 127.0.0.1 -n 3 > nul 
+        del "{os.path.abspath(sys.argv[0])}"  
+        ren "{os.path.join(os.getcwd(),  filename)}" "{target_exe}" 
+        start "" "{os.path.join(os.getcwd(),  target_exe)}" 
+        del "%~f0" 
+        """ 
+   
+        bat_file = 'l4d_tool_update.bat'  
+        with open(bat_file, 'w') as f: 
+            f.write(bat_content)  
+
+        subprocess.Popen(bat_file, shell=True) 
+        sys.exit()  
  
-    def restart_application(self): 
-        python = sys.executable  
-        os.execl(python,  python, *sys.argv) 
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
