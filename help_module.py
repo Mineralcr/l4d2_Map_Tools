@@ -47,9 +47,9 @@ def show_update_log(parent=None):
  
  
 def send_email(error_description, screenshot_path):  
-    sender_email = '1291560497@qq.com'
-    sender_password = 'yrlbfmtkwhkmgiaa' 
-    receiver_email = '3841013254@qq.com'  
+    sender_email = 'Secret'
+    sender_password = 'Secret' 
+    receiver_email = 'Secret'  
     smtps = 'smtp.qq.com'
  
     message = MIMEMultipart() 
