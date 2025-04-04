@@ -3,7 +3,7 @@ import subprocess
 import threading
 import os
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-                             QPushButton, QLabel, QFileDialog, QCheckBox, QInputDialog,
+                             QPushButton, QLabel, QFileDialog, QCheckBox, QInputDialog, QComboBox,
                              QMessageBox, QProgressBar, QTextEdit, QProgressDialog, QLineEdit)
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 import zipfile
@@ -20,7 +20,7 @@ import requests
 from packaging import version
 import traceback
 
-CURRENT_VERSION = "1.0.5"
+CURRENT_VERSION = "1.0.6"
 UPDATE_CHECK_URL = "https://api.github.com/repos/Mineralcr/l4d2_Map_Tools/releases/latest"
 CONFIG_FILE = "map_tools_config.ini"
 
@@ -153,15 +153,6 @@ class MapBuilder:
         self._run_process(command)
         return self._restore_map_file(target_path)
 
-def read_string(file):
-    result = b''
-    while True:
-        char = file.read(1)
-        if char == b'\x00':
-            break
-        result += char
-    return result.decode('utf-8')
-
 def remove_directory_with_retries(file_path, max_retries=5):
     retries = 0
     while retries < max_retries:
@@ -192,13 +183,13 @@ class FileProcessor(QThread):
     dict_exist_signal = pyqtSignal(str)
     finished_signal = pyqtSignal(bool)
 
-    def __init__(self, input_path, rename_path, output_path, compress_vpk, check_dictionary, bsp_path, auto_compress_dict,
+    def __init__(self, input_path, rename_path, output_path, output_type, check_dictionary, bsp_path, auto_compress_dict,
                  main_window):
         super().__init__()
         self.input_path = input_path
         self.rename_path = rename_path
         self.output_path = output_path
-        self.compress_vpk = compress_vpk
+        self.output_type = output_type
         self.check_dictionary = check_dictionary
         self.bsp_path = bsp_path
         self.temp_dir = os.path.join(self.output_path, "temp_vpk")
@@ -231,8 +222,10 @@ class FileProcessor(QThread):
 
                 if len(vpk_files) > 1:
                     if os.path.exists(self.temp_dir_file): 
-                        remove_directory_with_retries(self.temp_dir_file)
-                    os.makedirs(self.temp_dir_file) 
+                        if remove_directory_with_retries(self.temp_dir_file):
+                            os.makedirs(self.temp_dir_file) 
+                    else:
+                        os.makedirs(self.temp_dir_file)
                     for vpk_file in vpk_files:
                         thread = threading.Thread(target=self.export_vpk_files,  args=(vpk_file,)) 
                         thread.start()  
@@ -244,8 +237,10 @@ class FileProcessor(QThread):
 
             if not os.path.exists(self.temp_dir_file): 
                 if os.path.exists(self.temp_dir_file): 
-                    remove_directory_with_retries(self.temp_dir_file)
-                os.makedirs(self.temp_dir_file) 
+                    if remove_directory_with_retries(self.temp_dir_file):
+                        os.makedirs(self.temp_dir_file) 
+                else:
+                    os.makedirs(self.temp_dir_file) 
 
             if not os.listdir(self.temp_dir_file): 
                 thread = threading.Thread(target=self.export_vpk_files,  args=(self.input_path,))  
@@ -258,7 +253,7 @@ class FileProcessor(QThread):
             self.process_vpk() 
             remove_directory_with_retries(self.rename_path)
 
-            if self.compress_vpk: 
+            if self.output_type != "vpk": 
                 current_time = datetime.now().strftime("%Y-%m-%d    %H:%M:%S")
                 message = f"[{current_time}]正在压缩文件..."
                 self.emit_same_message(message) 
@@ -291,8 +286,10 @@ class FileProcessor(QThread):
 
     def extract_archive(self):
         if os.path.exists(self.temp_dir):
-            remove_directory_with_retries(self.temp_dir)
-        os.makedirs(self.temp_dir)
+            if remove_directory_with_retries(self.temp_dir):
+                os.makedirs(self.temp_dir)
+        else:
+            os.makedirs(self.temp_dir)
 
         if self.input_path.lower().endswith('.zip'):
             with zipfile.ZipFile(self.input_path, 'r') as zip_ref:
@@ -423,22 +420,23 @@ class FileProcessor(QThread):
 
     def compress_output(self):
         base_name = os.path.splitext(os.path.basename(self.output_path))[0]
-        output_zip = os.path.join(os.path.dirname(self.output_path), f"{base_name}.zip")
+        output_file = ""
 
-        with zipfile.ZipFile(output_zip, 'w', zipfile.ZIP_DEFLATED) as zipf:
-            zipf.write(self.output_path, os.path.basename(self.output_path))
+        if self.output_type == "zip":
+            output_file = os.path.join(os.path.dirname(self.output_path), f"{base_name}.zip")
+            with zipfile.ZipFile(output_file, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                zipf.write(self.output_path, os.path.basename(self.output_path))
+        elif self.output_type == "7z":
+            output_file = os.path.join(os.path.dirname(self.output_path),  f"{base_name}.7z") 
+            with py7zr.SevenZipFile(output_file, 'w') as z: 
+                z.write(self.output_path,  os.path.basename(self.output_path))
+        elif self.output_type == "rar":
+            output_file = os.path.join(os.path.dirname(self.output_path),  f"{base_name}.rar") 
+            with rarfile.RarFile(output_file, 'w') as rar_ref: 
+                rar_ref.write(self.output_path,  os.path.basename(self.output_path))  
 
         os.remove(self.output_path)
-        pattern = r'_client$'
-        has_client_suffix = bool(re.search(pattern, base_name))
-        if has_client_suffix:
-            client_zip_path = os.path.join(os.path.dirname(self.output_path), f"{base_name}.zip")
-            os.rename(output_zip, client_zip_path)
-            self.output_path = client_zip_path
-        else:
-            server_zip_path = os.path.join(os.path.dirname(self.output_path), f"{base_name}.zip")
-            os.rename(output_zip, server_zip_path)
-            self.output_path = server_zip_path
+        self.output_path = output_file
 
 
 class DragAndDropButton(QPushButton):
@@ -472,7 +470,7 @@ class MainWindow(QMainWindow):
  
         self.setWindowIcon(self.style().standardIcon(42))  
         self.setWindowTitle("    洛琪地图简易工具") 
-        self.setGeometry(100,  100, 400, 850) 
+        self.setGeometry(100,  100, 400, 900) 
  
         self.central_widget  = QWidget() 
         self.setCentralWidget(self.central_widget)  
@@ -553,14 +551,17 @@ class MainWindow(QMainWindow):
  
         checkbox_layout1 = QHBoxLayout() 
         checkbox_layout2 = QHBoxLayout()
-
-        self.compress_checkbox  = QCheckBox("自动压缩为ZIP文件") 
-        self.compress_checkbox.setChecked(True)  
-        checkbox_layout1.addWidget(self.compress_checkbox)  
  
         self.check_dictionary_checkbox  = QCheckBox("字典存在性检测") 
         self.check_dictionary_checkbox.setChecked(True)  
         checkbox_layout1.addWidget(self.check_dictionary_checkbox)  
+
+        self.format_label  = QLabel("导出格式：") 
+        self.format_combobox  = QComboBox() 
+        self.format_combobox.addItems(["vpk",  "zip", "7z", "rar"]) 
+        checkbox_layout1.addWidget(self.format_label,  stretch=1)
+        checkbox_layout1.addWidget(self.format_combobox,  stretch=2)
+        checkbox_layout1.insertStretch(1,  1) 
  
         self.auto_compress_dict_checkbox  = QCheckBox("开启自动压字典") 
         self.auto_compress_dict_checkbox.setChecked(True)  
@@ -656,37 +657,42 @@ class MainWindow(QMainWindow):
         self.command_preview.setPlainText(preview_text)
         self.launch_options_input.setStyleSheet("")
  
-    def load_config(self):
-        config = configparser.ConfigParser()
-        if os.path.exists(CONFIG_FILE):
-            config.read(CONFIG_FILE)
-            if 'Paths' in config:
-                last_input_folder = config.get('Paths',  'last_input_folder', fallback='')
-                last_exe_path = config.get('Paths',  'last_exe_path', fallback='')
-                last_output_dir = config.get('Paths',  'last_output_dir', fallback='')
-                if 'launch_options' in config['Paths']:
-                    opts = config.get('Paths', 'launch_options', fallback='')
-                    self.launch_options_input.setText(opts)
-                    self.validate_launch_options()
-                if last_input_folder:
-                    self.last_input_folder  = last_input_folder
-                if last_exe_path:
-                    self.bsp_path  = last_exe_path
-                    self.bsp_path_label.setText(last_exe_path)
-                if last_output_dir:
-                    self.output_dir  = last_output_dir
-                    self.output_dir_label.setText(last_output_dir)
-
-    def save_config(self):
-        config = configparser.ConfigParser()
-        config['Paths'] = {
-            'last_input_folder': os.path.dirname(self.input_file) if self.input_file else '',
-            'last_exe_path': self.bsp_path,
-            'last_output_dir': self.output_dir,
-            'launch_options': " ".join(self.launch_options)
-        }
-        with open(CONFIG_FILE, 'w') as configfile:
-            config.write(configfile)
+    def load_config(self): 
+        config = configparser.ConfigParser() 
+        if os.path.exists(CONFIG_FILE):  
+            config.read(CONFIG_FILE)  
+            if 'Paths' in config: 
+                last_input_folder = config.get('Paths',   'last_input_folder', fallback='') 
+                last_exe_path = config.get('Paths',   'last_exe_path', fallback='') 
+                last_output_dir = config.get('Paths',   'last_output_dir', fallback='') 
+                if 'launch_options' in config['Paths']: 
+                    opts = config.get('Paths',  'launch_options', fallback='') 
+                    self.launch_options_input.setText(opts)  
+                    self.validate_launch_options()  
+                if last_input_folder: 
+                    self.last_input_folder   = last_input_folder 
+                if last_exe_path: 
+                    self.bsp_path   = last_exe_path 
+                    self.bsp_path_label.setText(last_exe_path)  
+                if last_output_dir: 
+                    self.output_dir   = last_output_dir 
+                    self.output_dir_label.setText(last_output_dir)  
+                last_format = config.get('Paths',  'last_export_format', fallback='zip') 
+                index = self.format_combobox.findText(last_format)  
+                if index != -1: 
+                    self.format_combobox.setCurrentIndex(index)  
+ 
+    def save_config(self): 
+        config = configparser.ConfigParser() 
+        config['Paths'] = { 
+            'last_input_folder': os.path.dirname(self.input_file)  if self.input_file  else '', 
+            'last_exe_path': self.bsp_path,  
+            'last_output_dir': self.output_dir,  
+            'launch_options': " ".join(self.launch_options),  
+            'last_export_format': self.format_combobox.currentText()  
+        } 
+        with open(CONFIG_FILE, 'w') as configfile: 
+            config.write(configfile)  
  
     def is_steam_no_running(self): 
         for proc in psutil.process_iter(['name']):  
@@ -809,7 +815,7 @@ class MainWindow(QMainWindow):
             self.input_file,  
             self.rename_path,
             self.output_dir,  
-            self.compress_checkbox.isChecked(),  
+            self.format_combobox.currentText(),  
             self.check_dictionary_checkbox.isChecked(),  
             self.bsp_path,  
             self.auto_compress_dict_checkbox.isChecked(),  
@@ -821,6 +827,7 @@ class MainWindow(QMainWindow):
         self.worker.dict_exist_signal.connect(self.log_text_edit.append)  
         self.worker.finished_signal.connect(self.on_process_finished)  
         self.worker.start()  
+        self.process_btn.setEnabled(False)
  
     def on_process_finished(self, success): 
         self.progress_bar.setVisible(False)  
@@ -903,7 +910,7 @@ class MainWindow(QMainWindow):
 
         bat_content = f""" 
         @echo off 
-        ping 127.0.0.1 -n 3 > nul 
+        ping 127.0.0.1 -n 2 > nul 
         del "{os.path.abspath(sys.argv[0])}"  
         ren "{os.path.join(os.getcwd(),  filename)}" "{target_exe}" 
         start "" "{os.path.join(os.getcwd(),  target_exe)}" 
