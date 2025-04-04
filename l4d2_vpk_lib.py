@@ -4,6 +4,7 @@ from hashlib import md5
 from io import open as fopen
 import os
 import sys
+import re
 
 __version__ = "1.4.0"
 __author__ = ""
@@ -57,6 +58,10 @@ class NewVPK(object):
                 rel = ' '
 
             for filename in filelist:
+
+                if re.search(r'[\u4e00-\u9fff]',  filename): 
+                    continue 
+
                 filename = filename.split('.')
                 if len(filename) <= 1:
                     raise RuntimeError("Files without an extension are not supported: {0}".format(
@@ -223,17 +228,26 @@ class NewVPK(object):
 
 def _read_cstring(f, encoding='utf-8'):
     buf = b''
-
-    for chunk in iter(lambda: f.read(64), b''):
-        pos = chunk.find(b'\x00')
+    for chunk in iter(lambda: f.read(64),  b''):
+        pos = chunk.find(b'\x00') 
         if pos > -1:
             buf += chunk[:pos]
-            f.seek(f.tell() - (len(chunk) - (pos + 1)))
-            break
+            f.seek(f.tell()  - (len(chunk) - (pos + 1)))
+            break 
+        buf += chunk 
+ 
+    try:
+        return buf.decode(encoding,  errors='strict')
+    except UnicodeDecodeError:
+        fallback_encodings = ['gbk', 'latin-1', 'utf-16']
+        for enc in fallback_encodings:
+            try:
+                return buf.decode(enc,  errors='strict')
+            except UnicodeDecodeError:
+                continue 
+ 
+    return buf.decode('latin-1',  errors='ignore')
 
-        buf += chunk
-
-    return buf.decode(encoding) if encoding else buf
 
 class VPK(object):
     """
