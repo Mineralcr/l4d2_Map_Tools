@@ -2,7 +2,7 @@ import shutil
 import subprocess
 import threading
 import os
-from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+from PyQt5.QtWidgets import (QApplication, QMainWindow, QSizePolicy, QWidget, QVBoxLayout, QHBoxLayout,
                              QPushButton, QLabel, QFileDialog, QCheckBox, QInputDialog, QComboBox,
                              QMessageBox, QProgressBar, QTextEdit, QProgressDialog, QLineEdit)
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
@@ -19,8 +19,9 @@ import psutil
 import requests
 from packaging import version
 import traceback
+from help_module import show_help, show_update_log, report_error, about_this
 
-CURRENT_VERSION = "1.0.6"
+CURRENT_VERSION = "1.0.7"
 UPDATE_CHECK_URL = "https://api.github.com/repos/Mineralcr/l4d2_Map_Tools/releases/latest"
 CONFIG_FILE = "map_tools_config.ini"
 
@@ -63,29 +64,36 @@ class UpdateChecker(QThread):
             self.no_update_signal.emit()
 
 
-class UpdateDownloader(QThread):
-    progress_signal = pyqtSignal(int)
-    finished_signal = pyqtSignal()
-
-    def __init__(self, download_url):
-        super().__init__()
-        self.download_url = download_url
-
-    def run(self):
-        try:
-            response = requests.get(self.download_url, stream=True)
-            total_size = int(response.headers.get('content-length', 0))
-            block_size = 1024
-            progress = 0
-            with open("update.zip", 'wb') as f:
-                for data in response.iter_content(block_size):
-                    progress += len(data)
-                    f.write(data)
-                    percent = int((progress / total_size) * 100)
-                    self.progress_signal.emit(percent)
-            self.finished_signal.emit()
-        except Exception:
-            pass
+class UpdateDownloader(QThread): 
+    progress_signal = pyqtSignal(int) 
+    finished_signal = pyqtSignal() 
+    cancelled = False 
+ 
+    def __init__(self, download_url): 
+        super().__init__() 
+        self.download_url  = download_url 
+ 
+    def run(self): 
+        try: 
+            response = requests.get(self.download_url,  stream=True) 
+            total_size = int(response.headers.get('content-length',  0)) 
+            block_size = 1024 
+            progress = 0 
+            with open("update.zip",  'wb') as f: 
+                for data in response.iter_content(block_size):  
+                    if self.cancelled: 
+                        break 
+                    progress += len(data) 
+                    f.write(data)  
+                    percent = int((progress / total_size) * 100) 
+                    self.progress_signal.emit(percent)  
+            if not self.cancelled:  
+                self.finished_signal.emit()  
+        except Exception: 
+            pass 
+ 
+    def cancel(self): 
+        self.cancelled  = True 
 
 
 class MapBuilder:
@@ -181,7 +189,7 @@ class FileProcessor(QThread):
     progress_signal = pyqtSignal(int)
     message_signal = pyqtSignal(str)
     dict_exist_signal = pyqtSignal(str)
-    finished_signal = pyqtSignal(bool)
+    finished_signal = pyqtSignal(bool, bool)
 
     def __init__(self, input_path, rename_path, output_path, output_type, check_dictionary, bsp_path, auto_compress_dict,
                  main_window):
@@ -199,6 +207,8 @@ class FileProcessor(QThread):
         self.main_window = main_window
         self.launch_options = main_window.launch_options
         self.client_output_path = None
+
+        self.process_type = False
 
     def emit_same_message(self, message):
         self.message_signal.emit(message)
@@ -262,13 +272,13 @@ class FileProcessor(QThread):
             current_time = datetime.now().strftime("%Y-%m-%d    %H:%M:%S")
             message = f"[{current_time}]处理完成！"
             self.emit_same_message(message) 
-            self.finished_signal.emit(True) 
+            self.finished_signal.emit(True, self.process_type) 
 
         except Exception as e: 
             current_time = datetime.now().strftime("%Y-%m-%d     %H:%M:%S") 
             message = f"[{current_time}]错误: {str(e)}" 
             self.emit_same_message(message)  
-            self.finished_signal.emit(False)  
+            self.finished_signal.emit(False, self.process_type)  
         finally: 
             remove_directory_with_retries(self.temp_dir)
             remove_directory_with_retries(self.rename_path)
@@ -292,13 +302,13 @@ class FileProcessor(QThread):
             os.makedirs(self.temp_dir)
 
         if self.input_path.lower().endswith('.zip'):
-            with zipfile.ZipFile(self.input_path, 'r') as zip_ref:
+            with zipfile.ZipFile(self.input_path, mode='r') as zip_ref:
                 zip_ref.extractall(self.temp_dir)
         elif self.input_path.lower().endswith('.7z'):
             with py7zr.SevenZipFile(self.input_path, mode='r') as z:
                 z.extractall(path=self.temp_dir)
         elif self.input_path.lower().endswith('.rar'):
-            with rarfile.RarFile(self.input_path, 'r') as rar_ref:
+            with rarfile.RarFile(self.input_path, mode='r') as rar_ref:
                 rar_ref.extractall(self.temp_dir)
 
         self.progress_signal.emit(30)
@@ -371,13 +381,16 @@ class FileProcessor(QThread):
             if b == 0:
                 current_time = datetime.now().strftime("%Y-%m-%d    %H:%M:%S")
                 message = f"[{current_time}]字典检测完成,没有发现缺少字典的小图"
+                self.process_type = True
                 self.emit_same_message(message)
             else:
                 current_time = datetime.now().strftime("%Y-%m-%d    %H:%M:%S")
                 if b == d:
                     message = f"[{current_time}]字典检测完成,发现 {b} 个缺少字典的小图,已进行处理"
+                    self.process_type = True
                 else:
                     message = f"[{current_time}]字典检测完成,发现 {b} 个缺少字典的小图,已处理{d}个，{b-d}个处理失败"
+                    self.process_type = False
                 self.emit_same_message(message)
 
                 shutil.copytree(self.temp_dir_file, self.temp_client_dir_file)
@@ -387,7 +400,8 @@ class FileProcessor(QThread):
                 )
                 vpk.new(self.temp_client_dir_file).save(self.client_output_path)
                 self.output_path = self.client_output_path
-                self.compress_output()
+                if self.output_type != "vpk": 
+                    self.compress_output()
                 if os.path.exists(self.temp_client_dir_file):
                     remove_directory_with_retries(self.temp_client_dir_file)
 
@@ -430,10 +444,16 @@ class FileProcessor(QThread):
             output_file = os.path.join(os.path.dirname(self.output_path),  f"{base_name}.7z") 
             with py7zr.SevenZipFile(output_file, 'w') as z: 
                 z.write(self.output_path,  os.path.basename(self.output_path))
-        elif self.output_type == "rar":
+        elif self.output_type  == "rar": 
             output_file = os.path.join(os.path.dirname(self.output_path),  f"{base_name}.rar") 
-            with rarfile.RarFile(output_file, 'w') as rar_ref: 
-                rar_ref.write(self.output_path,  os.path.basename(self.output_path))  
+            try: 
+                subprocess.run(['rar',  'a', output_file, self.output_path],  check=True) 
+            except FileNotFoundError: 
+                output_file = os.path.join(os.path.dirname(self.output_path), f"{base_name}.zip")
+                with zipfile.ZipFile(output_file, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                    zipf.write(self.output_path, os.path.basename(self.output_path))
+            except subprocess.CalledProcessError as e: 
+                print(f"压缩为 RAR 文件时出错: {e}")  
 
         os.remove(self.output_path)
         self.output_path = output_file
@@ -513,7 +533,38 @@ class MainWindow(QMainWindow):
                 border-radius: 4px; 
             } 
         """) 
- 
+
+        top_toolbar = self.addToolBar("MainToolbar") 
+        top_toolbar.setMovable(False) 
+        top_toolbar.setToolButtonStyle(Qt.ToolButtonTextOnly)
+        
+        right_container = QWidget()
+        right_layout = QHBoxLayout(right_container)
+        right_layout.setContentsMargins(0, 0, 0, 0) 
+        
+        btnA = QPushButton(" 帮助文档")
+        btnB = QPushButton(" 更新日志")
+        btnC = QPushButton(" 错误上报")
+        btnD = QPushButton(" 关于软件")
+        self.SetTpyeSingle(btnA)
+        self.SetTpyeSingle(btnB)
+        self.SetTpyeSingle(btnC)
+        self.SetTpyeSingle(btnD)
+        btnA.clicked.connect(lambda:  show_help(self)) 
+        btnB.clicked.connect(lambda:  show_update_log(self))
+        btnC.clicked.connect(lambda:  report_error(self))
+        btnD.clicked.connect(lambda:  about_this(self))
+        right_layout.addWidget(btnA)
+        right_layout.addWidget(btnB)
+        right_layout.addWidget(btnC)
+        right_layout.addWidget(btnD)
+        right_layout.setAlignment(Qt.AlignRight) 
+        
+        spacer = QWidget()
+        spacer.setSizePolicy(QSizePolicy.Expanding,  QSizePolicy.Preferred)
+        top_toolbar.addWidget(spacer) 
+        top_toolbar.addWidget(right_container) 
+
         self.title_label  = QLabel("洛琪地图简易工具") 
         self.title_label.setAlignment(Qt.AlignCenter)  
         self.title_label.setStyleSheet("""  
@@ -624,6 +675,15 @@ class MainWindow(QMainWindow):
         self.load_config()  
         self.check_for_updates()  
         self.update_command_preview()
+
+    def SetTpyeSingle(self, btn):
+            btn.setStyleSheet(""" 
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                stop:0 #FFA07A, stop:1 #FF6347);
+                border-radius: 8px;
+            }
+        """)
 
     def validate_launch_options(self):
         input_text = self.launch_options_input.text()
@@ -829,7 +889,7 @@ class MainWindow(QMainWindow):
         self.worker.start()  
         self.process_btn.setEnabled(False)
  
-    def on_process_finished(self, success): 
+    def on_process_finished(self, success, dict): 
         self.progress_bar.setVisible(False)  
         self.process_btn.setEnabled(True)  
  
@@ -842,14 +902,24 @@ class MainWindow(QMainWindow):
                     QMessageBox.Ok 
                 ) 
             else: 
-                QMessageBox.information(  
-                    self, 
-                    "处理完成", 
-                    f"已生成两份文件：\n{os.path.basename(self.worker.output_path)}\n{os.path.basename(self.worker.client_output_path)}\n"  
-                    f"前者上传服务器，后者发送玩家使用\n" 
-                    f"点击确定后将自动打开输出目录", 
-                    QMessageBox.Ok 
-                ) 
+                if dict:
+                    QMessageBox.information(  
+                        self, 
+                        "处理完成", 
+                        f"已生成两份文件：\n{os.path.basename(self.worker.output_path)}\n{os.path.basename(self.worker.client_output_path)}\n"  
+                        f"前者上传服务器，后者发送玩家使用\n" 
+                        f"点击确定后将自动打开输出目录", 
+                        QMessageBox.Ok 
+                    ) 
+                else:
+                    QMessageBox.information(  
+                        self, 
+                        "处理失败", 
+                        f"已生成两份文件：\n{os.path.basename(self.worker.output_path)}\n{os.path.basename(self.worker.client_output_path)}\n"  
+                        f"前者上传服务器，后者发送玩家使用\n" 
+                        f"但是字典自动压制失败!", 
+                        QMessageBox.Ok 
+                    ) 
  
             output_dir = os.path.dirname(self.worker.output_path)  
             self.worker.client_output_path  = None 
@@ -886,11 +956,17 @@ class MainWindow(QMainWindow):
     def download_update(self, download_url): 
         self.progress  = QProgressDialog("正在下载更新...", "取消", 0, 100, self) 
         self.progress.setWindowModality(Qt.WindowModal)  
+        self.progress.canceled.connect(self.cancel_update) 
  
         self.update_downloader  = UpdateDownloader(download_url) 
         self.update_downloader.progress_signal.connect(self.progress.setValue)  
         self.update_downloader.finished_signal.connect(self.apply_update)  
         self.update_downloader.start()  
+ 
+    def cancel_update(self): 
+        self.update_downloader.cancel() 
+        self.progress.close()  
+        QMessageBox.information(self,  "更新取消", "更新已取消")   
  
     def apply_update(self): 
         try: 
