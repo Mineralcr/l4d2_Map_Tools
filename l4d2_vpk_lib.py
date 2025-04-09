@@ -239,14 +239,7 @@ def _read_cstring(f, encoding='utf-8'):
     try:
         return buf.decode(encoding,  errors='strict')
     except UnicodeDecodeError:
-        fallback_encodings = ['gbk', 'latin-1', 'utf-16']
-        for enc in fallback_encodings:
-            try:
-                return buf.decode(enc,  errors='strict')
-            except UnicodeDecodeError:
-                continue 
- 
-    return buf.decode('latin-1',  errors='ignore')
+        return ' '
 
 
 class VPK(object):
