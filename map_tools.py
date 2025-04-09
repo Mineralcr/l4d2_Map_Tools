@@ -1,4 +1,4 @@
-import shutil
+import shutil 
 import subprocess
 import threading
 import os
@@ -19,9 +19,10 @@ import psutil
 import requests
 from packaging import version
 import traceback
+import itertools
 from help_module import show_help, show_update_log, report_error, about_this
 
-CURRENT_VERSION = "1.0.7"
+CURRENT_VERSION = "1.0.8"
 UPDATE_CHECK_URL = "https://api.github.com/repos/Mineralcr/l4d2_Map_Tools/releases/latest"
 CONFIG_FILE = "map_tools_config.ini"
 
@@ -190,6 +191,7 @@ class FileProcessor(QThread):
     message_signal = pyqtSignal(str)
     dict_exist_signal = pyqtSignal(str)
     finished_signal = pyqtSignal(bool, bool)
+    confirm_signal = pyqtSignal(str)
 
     def __init__(self, input_path, rename_path, output_path, output_type, check_dictionary, bsp_path, auto_compress_dict,
                  main_window):
@@ -207,8 +209,8 @@ class FileProcessor(QThread):
         self.main_window = main_window
         self.launch_options = main_window.launch_options
         self.client_output_path = None
-
         self.process_type = False
+        self.part_client_output_path_array = []
 
     def emit_same_message(self, message):
         self.message_signal.emit(message)
@@ -313,124 +315,198 @@ class FileProcessor(QThread):
 
         self.progress_signal.emit(30)
 
-    def process_vpk(self):
-        self.progress_signal.emit(30)
-        if os.path.exists(self.temp_dir):
-            remove_directory_with_retries(self.temp_dir)
-        if self.check_dictionary:
-            bsp_files = []
-            maps_dir = os.path.join(self.temp_dir_file, "maps")
-            if os.path.exists(maps_dir):
-                for root, dirs, files in os.walk(maps_dir):
-                    for file in files:
-                        if file.lower().endswith('.bsp'):
-                            bsp_files.append(os.path.join(root, file))
-            else:
-                current_time = datetime.now().strftime("%Y-%m-%d    %H:%M:%S")
-                message = f"[{current_time}]警告：未找到maps文件夹"
-                self.emit_same_message(message)
-
-            b = 0
-            d = 0
-            for bsp_file in bsp_files:
-                with open(bsp_file, 'rb') as file:
-                    content = file.read()
-                    pattern = b"\x73\x74\x72\x69\x6E\x67\x74\x61\x62\x6C\x65\x5F\x64\x69\x63\x74\x69\x6F\x6E\x61\x72\x79\x2E\x64\x63\x74\x50\x4B"
-                    offset = content.find(pattern)
-                    dname = os.path.splitext(os.path.basename(bsp_file))[0]
-
-                    if offset >= 0:
-                        current_time = datetime.now().strftime("%Y-%m-%d    %H:%M:%S")
-                        message = f"[{current_time}]地图名称: {dname}.bsp, 字典存在,安全!"
-                        self.dict_exist_signal.emit(message)
-                    else:
-                        if self.auto_compress_dict:
-                            exe_path = self.main_window.get_l4d2_exe_path(use_config=True)
-                            if not exe_path:
-                                raise Exception("用户取消选择exe路径")
-
-                            current_time = datetime.now().strftime("%Y-%m-%d    %H:%M:%S")
-                            message = f"[{current_time}]地图名称: {dname}.bsp, 字典缺失，正在进行处理!"
-                            self.emit_same_message(message)
-                            builder = MapBuilder(bsp_file, exe_path, self.dict_exist_signal)
-                            # builder.start_cubemap_process()
-                            if builder.start_dictionary_process(self.launch_options):
-                                d += 1
-                            b += 1
-                        else:
-                            reply = QMessageBox.question(self.main_window, "确认操作",
-                                                         f"{bsp_file}  存在缺少字典的小图，是否继续处理？",
-                                                         QMessageBox.Yes | QMessageBox.No)
-                            if reply == QMessageBox.No:
-                                raise Exception("用户取消处理")
+    def process_vpk(self): 
+        self.progress_signal.emit(30)  
+        if os.path.exists(self.temp_dir):  
+            remove_directory_with_retries(self.temp_dir)  
+        if self.check_dictionary:  
+            bsp_files = [] 
+            maps_dir = os.path.join(self.temp_dir_file,  "maps") 
+            if os.path.exists(maps_dir):  
+                for root, dirs, files in os.walk(maps_dir):  
+                    for file in files: 
+                        if file.lower().endswith('.bsp'):  
+                            bsp_files.append(os.path.join(root,  file)) 
+            else: 
+                current_time = datetime.now().strftime("%Y-%m-%d  %H:%M:%S") 
+                message = f"[{current_time}]警告：未找到maps文件夹" 
+                self.emit_same_message(message)  
+    
+            b = 0 
+            d = 0 
+            for bsp_file in bsp_files: 
+                with open(bsp_file, 'rb') as file: 
+                    content = file.read()  
+                    pattern = b"\x73\x74\x72\x69\x6E\x67\x74\x61\x62\x6C\x65\x5F\x64\x69\x63\x74\x69\x6F\x6E\x61\x72\x79\x2E\x64\x63\x74\x50\x4B" 
+                    offset = content.find(pattern)  
+                    dname = os.path.splitext(os.path.basename(bsp_file))[0]  
+    
+                    if offset >= 0: 
+                        current_time = datetime.now().strftime("%Y-%m-%d  %H:%M:%S") 
+                        message = f"[{current_time}]地图名称: {dname}.bsp, 字典存在,安全!" 
+                        self.dict_exist_signal.emit(message)  
+                    else: 
+                        if self.auto_compress_dict:  
+                            exe_path = self.main_window.get_l4d2_exe_path(use_config=True)  
+                            if not exe_path: 
+                                raise Exception("用户取消选择exe路径") 
+    
+                            current_time = datetime.now().strftime("%Y-%m-%d  %H:%M:%S") 
+                            message = f"[{current_time}]地图名称: {dname}.bsp, 字典缺失，正在进行处理!" 
+                            self.emit_same_message(message)  
+                            builder = MapBuilder(bsp_file, exe_path, self.dict_exist_signal)  
+                            if builder.start_dictionary_process(self.launch_options):  
+                                d += 1 
+                            b += 1 
+                        else: 
+                            event = threading.Event() 
+                            def on_confirm_reply(): 
+                                event.set()  
+        
+                            self.confirm_signal.connect(self.main_window.show_confirm_dialog)  
+                            self.main_window.confirm_signal_received = on_confirm_reply 
+                            self.confirm_signal.emit(bsp_file)  
+        
+                            event.wait()  
+        
+                            result = self.main_window.confirm_result  
+                            if result == QMessageBox.No or result == QMessageBox.Cancel: 
+                                continue 
                             else:
-                                exe_path = self.main_window.get_l4d2_exe_path(use_config=True)
-                                if not exe_path:
-                                    raise Exception("用户取消选择exe路径")
-
-                                self.auto_compress_dict = True
-                                current_time = datetime.now().strftime("%Y-%m-%d    %H:%M:%S")
-                                message = f"[{current_time}]地图名称: {dname}.bsp, 字典缺失，正在进行处理!"
-                                self.emit_same_message(message)
-                                builder = MapBuilder(bsp_file, exe_path, self.dict_exist_signal)
-                                # builder.start_cubemap_process()
-                                if builder.start_dictionary_process(self.launch_options):
-                                    d += 1
-                            b += 1
-
-            if b == 0:
-                current_time = datetime.now().strftime("%Y-%m-%d    %H:%M:%S")
-                message = f"[{current_time}]字典检测完成,没有发现缺少字典的小图"
-                self.process_type = True
-                self.emit_same_message(message)
-            else:
-                current_time = datetime.now().strftime("%Y-%m-%d    %H:%M:%S")
-                if b == d:
-                    message = f"[{current_time}]字典检测完成,发现 {b} 个缺少字典的小图,已进行处理"
-                    self.process_type = True
-                else:
-                    message = f"[{current_time}]字典检测完成,发现 {b} 个缺少字典的小图,已处理{d}个，{b-d}个处理失败"
-                    self.process_type = False
-                self.emit_same_message(message)
-
-                shutil.copytree(self.temp_dir_file, self.temp_client_dir_file)
-                self.client_output_path = os.path.join(
-                    self.output_path,
-                    f"{os.path.splitext(os.path.basename(self.input_path))[0]}_client.vpk"
-                )
-                vpk.new(self.temp_client_dir_file).save(self.client_output_path)
-                self.output_path = self.client_output_path
-                if self.output_type != "vpk": 
+                                exe_path = self.main_window.get_l4d2_exe_path(use_config=True)  
+                                if not exe_path: 
+                                    raise Exception("用户取消选择exe路径") 
+    
+                                self.auto_compress_dict  = True 
+                                current_time = datetime.now().strftime("%Y-%m-%d  %H:%M:%S") 
+                                message = f"[{current_time}]地图名称: {dname}.bsp, 字典缺失，正在进行处理!" 
+                                self.emit_same_message(message)  
+                                builder = MapBuilder(bsp_file, exe_path, self.dict_exist_signal) 
+                                if builder.start_dictionary_process(self.launch_options):  
+                                    d += 1 
+                                b += 1 
+    
+            if b == 0: 
+                current_time = datetime.now().strftime("%Y-%m-%d  %H:%M:%S") 
+                message = f"[{current_time}]字典检测完成,没有发现缺少字典的小图" 
+                self.process_type  = True 
+                self.emit_same_message(message)  
+            else: 
+                current_time = datetime.now().strftime("%Y-%m-%d  %H:%M:%S") 
+                if b == d: 
+                    message = f"[{current_time}]字典检测完成,发现 {b} 个缺少字典的小图,已进行处理" 
+                    self.process_type  = True 
+                else: 
+                    message = f"[{current_time}]字典检测完成,发现 {b} 个缺少字典的小图,已处理{d}个，{b - d}个处理失败" 
+                    self.process_type  = False 
+                self.emit_same_message(message) 
+                self.client_output_path  = os.path.join(  
+                    self.output_path,  
+                    f"{os.path.splitext(os.path.basename(self.input_path))[0]}_client.vpk"  
+                )  
+    
+                shutil.copytree(self.temp_dir_file,  self.temp_client_dir_file)  
+            
+                def get_folder_size(folder): 
+                    total_size = 0 
+                    for path, dirs, files in os.walk(folder):  
+                        for f in files: 
+                            fp = os.path.join(path,  f) 
+                            total_size += os.path.getsize(fp)  
+                    return total_size 
+            
+                max_size = 1.5 * 1024 * 1024 * 1024  # 1.5GB 
+                folder_size = get_folder_size(self.temp_client_dir_file)  
+            
+                if folder_size > max_size: 
+                    def split_folder(folder, max_size): 
+                        file_list = [] 
+                        for root, dirs, files in os.walk(folder):  
+                            for file in files: 
+                                file_path = os.path.join(root,  file) 
+                                file_list.append((file_path,  os.path.getsize(file_path)))  
+                        file_list.sort(key=lambda  x: x[1], reverse=True) 
+            
+                        part_index = 1 
+                        current_size = 0 
+                        current_part_files = [] 
+                        part_folders = [] 
+            
+                        for file_path, file_size in file_list: 
+                            if current_size + file_size > max_size: 
+                                part_folder = f"{self.temp_client_dir_file}_{part_index}"  
+                                os.makedirs(part_folder,  exist_ok=True) 
+                                for src_file in current_part_files: 
+                                    dest_file = os.path.join(part_folder,  os.path.relpath(src_file,  folder)) 
+                                    os.makedirs(os.path.dirname(dest_file),  exist_ok=True) 
+                                    shutil.copy2(src_file,  dest_file) 
+                                part_folders.append(part_folder)  
+                                current_part_files = [] 
+                                current_size = 0 
+                                part_index += 1 
+                            current_size += file_size 
+                            current_part_files.append(file_path)  
+            
+                        if current_part_files: 
+                            part_folder = f"{self.temp_client_dir_file}_{part_index}"  
+                            os.makedirs(part_folder,  exist_ok=True) 
+                            for src_file in current_part_files: 
+                                dest_file = os.path.join(part_folder,  os.path.relpath(src_file,  folder)) 
+                                os.makedirs(os.path.dirname(dest_file),  exist_ok=True) 
+                                shutil.copy2(src_file,  dest_file) 
+                            part_folders.append(part_folder)  
+            
+                        return part_folders 
+            
+                    part_folders = split_folder(self.temp_client_dir_file,  max_size) 
+                    for i, part_folder in enumerate(part_folders, start=1): 
+                        part_client_output_path = os.path.join(  
+                            self.output_path,  
+                            f"{os.path.splitext(os.path.basename(self.input_path))[0]}_client_{i}.vpk"  
+                        ) 
+                        vpk.new(part_folder).save(part_client_output_path)  
+                        self.part_client_output_path_array.append(part_client_output_path) 
+                        remove_directory_with_retries(part_folder) 
+                else: 
+                    vpk.new(self.temp_client_dir_file).save(self.client_output_path)  
+                    self.part_client_output_path_array.append(self.client_output_path) 
+            
+                self.output_path  = self.client_output_path  
+                if self.output_type  != "vpk": 
                     self.compress_output()
-                if os.path.exists(self.temp_client_dir_file):
-                    remove_directory_with_retries(self.temp_client_dir_file)
-
-        current_time = datetime.now().strftime("%Y-%m-%d    %H:%M:%S")
-        message = f"[{current_time}]正在进行地图服务端无用资源清洗.."
-        self.emit_same_message(message)
-        for root, dirs, files in os.walk(self.temp_dir_file):
-            for file in files:
-                if '.' not in os.path.basename(file) or file.lower().endswith(('.vtf', '.mp3', '.wav', '.vmf', '.vmx')):
-                    file_path = os.path.join(root, file)
-                    os.remove(file_path)
-
-        current_time = datetime.now().strftime("%Y-%m-%d    %H:%M:%S")
-        message = f"[{current_time}]地图服务端无用资源清洗完毕.."
-        self.emit_same_message(message)
-
-        self.progress_signal.emit(50)
-
-        base_name = os.path.splitext(os.path.basename(self.input_path))[0]
-        if b == 0:
-            output_vpk = os.path.join(self.output_path, f"{base_name}_server.vpk")
-        else:
-            output_vpk = os.path.join(os.path.dirname(self.output_path), f"{base_name}_server.vpk")
-
-        new_pack = vpk.new(self.temp_dir_file)
+    
+                if os.path.exists(self.temp_client_dir_file):  
+                    remove_directory_with_retries(self.temp_client_dir_file)  
+    
+        current_time = datetime.now().strftime("%Y-%m-%d  %H:%M:%S") 
+        message = f"[{current_time}]正在进行地图服务端无用资源清洗.." 
+        self.emit_same_message(message)  
+        for root, dirs, files in os.walk(self.temp_dir_file):  
+            for file in files: 
+                if '.' not in os.path.basename(file)  or file.lower().endswith(('.vtf',  '.mp3', '.wav', '.vmf', '.vmx')): 
+                    file_path = os.path.join(root,  file) 
+                    os.remove(file_path)  
+    
+        current_time = datetime.now().strftime("%Y-%m-%d  %H:%M:%S") 
+        message = f"[{current_time}]地图服务端无用资源清洗完毕.." 
+        self.emit_same_message(message)  
+    
+        self.progress_signal.emit(50)  
+    
+        base_name = os.path.splitext(os.path.basename(self.input_path))[0]  
+        if b == 0: 
+            output_vpk = os.path.join(self.output_path,  f"{base_name}_server.vpk")  
+        else: 
+            output_vpk = os.path.join(os.path.dirname(self.output_path),  f"{base_name}_server.vpk")  
+    
+        new_pack = vpk.new(self.temp_dir_file)  
         new_pack.save(output_vpk)
-
-        self.output_path = output_vpk
-        self.progress_signal.emit(100)
+        self.part_client_output_path_array = []
+        self.part_client_output_path_array.append(output_vpk)  
+    
+        self.output_path  = output_vpk 
+        self.progress_signal.emit(100)  
+ 
 
     def compress_output(self):
         base_name = os.path.splitext(os.path.basename(self.output_path))[0]
@@ -439,11 +515,13 @@ class FileProcessor(QThread):
         if self.output_type == "zip":
             output_file = os.path.join(os.path.dirname(self.output_path), f"{base_name}.zip")
             with zipfile.ZipFile(output_file, 'w', zipfile.ZIP_DEFLATED) as zipf:
-                zipf.write(self.output_path, os.path.basename(self.output_path))
+                for file in self.part_client_output_path_array:
+                    zipf.write(file, os.path.basename(file))
         elif self.output_type == "7z":
             output_file = os.path.join(os.path.dirname(self.output_path),  f"{base_name}.7z") 
-            with py7zr.SevenZipFile(output_file, 'w') as z: 
-                z.write(self.output_path,  os.path.basename(self.output_path))
+            with py7zr.SevenZipFile(output_file, 'w') as zipf: 
+                for file in self.part_client_output_path_array:
+                    zipf.write(file, os.path.basename(file))
         elif self.output_type  == "rar": 
             output_file = os.path.join(os.path.dirname(self.output_path),  f"{base_name}.rar") 
             try: 
@@ -451,11 +529,13 @@ class FileProcessor(QThread):
             except FileNotFoundError: 
                 output_file = os.path.join(os.path.dirname(self.output_path), f"{base_name}.zip")
                 with zipfile.ZipFile(output_file, 'w', zipfile.ZIP_DEFLATED) as zipf:
-                    zipf.write(self.output_path, os.path.basename(self.output_path))
+                    for file in self.part_client_output_path_array:
+                        zipf.write(file, os.path.basename(file))
             except subprocess.CalledProcessError as e: 
                 print(f"压缩为 RAR 文件时出错: {e}")  
 
-        os.remove(self.output_path)
+        for file in self.part_client_output_path_array:
+            os.remove(file)
         self.output_path = output_file
 
 
@@ -671,6 +751,8 @@ class MainWindow(QMainWindow):
         self.bsp_path  = "" 
         self.output_dir  = "" 
         self.worker  = None 
+        self.confirm_result = None
+        self.confirm_signal_received = None
  
         self.load_config()  
         self.check_for_updates()  
@@ -685,25 +767,32 @@ class MainWindow(QMainWindow):
             }
         """)
 
-    def validate_launch_options(self):
-        input_text = self.launch_options_input.text()
-        valid = True
-        options = []
-
-        for opt in input_text.split():
-            if not opt.startswith(('-', '+')):
-                QMessageBox.warning(self, "无效参数", f"参数 '{opt}' 必须以 '-' 或 '+' 开头")
-                valid = False
-                break
-            options.append(opt)
-
-        if valid:
-            self.launch_options = options
-            self.update_command_preview()
-        else:
-            self.launch_options_input.setStyleSheet("border: 1px solid red;")
-            self.command_preview.setPlainText("包含无效参数！")
-        return valid
+    def validate_launch_options(self): 
+        input_text = self.launch_options_input.text()  
+        valid = True 
+        options = [] 
+    
+        for opt in input_text.split():  
+            try: 
+                float(opt) 
+                is_number = True 
+            except ValueError: 
+                is_number = False 
+    
+            if not is_number and not opt.startswith(('-',  '+')): 
+                QMessageBox.warning(self,  "无效参数", f"参数 '{opt}' 必须以 '-' 或 '+' 开头") 
+                valid = False 
+                break 
+            options.append(opt)  
+    
+        if valid: 
+            self.launch_options  = options 
+            self.update_command_preview()  
+        else: 
+            self.launch_options_input.setStyleSheet("border:  1px solid red;") 
+            self.command_preview.setPlainText(" 包含无效参数！") 
+        return valid 
+ 
 
     def update_command_preview(self):
         base_command = [
@@ -862,18 +951,21 @@ class MainWindow(QMainWindow):
     def process_file(self): 
         if not self.input_file:  
             QMessageBox.warning(self,  "警告", "请先选择输入文件") 
-            return
-
-        if not self.validate_launch_options():
-            QMessageBox.warning(self, "警告", "启动项参数无效")
-            return
+            return 
+ 
+        if not self.validate_launch_options():  
+            QMessageBox.warning(self,  "警告", "启动项参数无效") 
+            return 
+ 
+        self.status_label.setText("")  
+        self.log_text_edit.clear()  
  
         self.progress_bar.setVisible(True)  
         self.progress_bar.setValue(0)  
  
         self.worker  = FileProcessor( 
             self.input_file,  
-            self.rename_path,
+            self.rename_path,  
             self.output_dir,  
             self.format_combobox.currentText(),  
             self.check_dictionary_checkbox.isChecked(),  
@@ -999,6 +1091,14 @@ class MainWindow(QMainWindow):
 
         subprocess.Popen(bat_file, shell=True) 
         sys.exit()  
+    
+    def show_confirm_dialog(self, bsp_file): 
+        reply = QMessageBox.question(self,   "确认操作", 
+                                     f"{bsp_file} 存在缺少字典的小图，是否继续处理？", 
+                                     QMessageBox.Yes | QMessageBox.No) 
+        self.confirm_result  = reply 
+        if self.confirm_signal_received:  
+            self.confirm_signal_received() 
  
 
 if __name__ == "__main__":
