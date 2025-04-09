@@ -2,7 +2,7 @@ import smtplib
 from email.mime.multipart  import MIMEMultipart 
 from email.mime.text  import MIMEText 
 from email.mime.image  import MIMEImage 
-from PyQt5.QtWidgets import QMessageBox, QDialog, QVBoxLayout, QLabel, QPushButton, QTextEdit, QFileDialog 
+from PyQt5.QtWidgets import QMessageBox, QDialog, QScrollArea, QVBoxLayout, QLabel, QPushButton, QTextEdit, QFileDialog 
 from PyQt5.QtCore import Qt 
  
  
@@ -35,21 +35,31 @@ def show_update_log(parent=None):
     v1.0.7 (2025 - 04 - 05) 
       - 修复导出类型选择 vpk 类型时无法生成 client 文件的问题 
       - 修复自动更新系统更新开始后无法取消的问题 
-      - 修复rar压缩报错的问题
+      - 修复rar压缩报错的问题 
       - 增加帮助菜单、更新日志、错误报告等工具栏 
+ 
+    v1.0.8 (2025 - 04 - 09) 
+      - 修复额外启动项无法添加带有参数的启动项的问题 
+      - 修复部分文件解码失败的问题 
+      - 修复部分地图大于1.6G时将文件全部打包到一个vpk的问题 
+      - 修复子窗口和主窗口不在同一进程的问题 
     """) 
     log_content.setAlignment(Qt.AlignLeft)  
-    layout.addWidget(log_content)  
+ 
+    scroll_area = QScrollArea() 
+    scroll_area.setWidget(log_content)  
+    scroll_area.setWidgetResizable(True)  
+    layout.addWidget(scroll_area)  
  
     dialog.setLayout(layout)  
     dialog.setFixedSize(400,  300) 
-    dialog.exec_()  
+    dialog.exec_()   
  
  
 def send_email(error_description, screenshot_path):  
-    sender_email = 'Secret'
-    sender_password = 'Secret' 
-    receiver_email = 'Secret'  
+    sender_email = '1291560497@qq.com'
+    sender_password = 'yrlbfmtkwhkmgiaa' 
+    receiver_email = '3841013254@qq.com'  
     smtps = 'smtp.qq.com'
  
     message = MIMEMultipart() 
